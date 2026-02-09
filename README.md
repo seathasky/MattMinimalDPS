@@ -1,5 +1,5 @@
 # MattMinimalDPS
-A minimal skin for the Blizzard's Damage Meter. Keep it clean, keep it minimal!
+A minimal skin for Blizzard's Damage Meter. Keep it clean, keep it minimal!
 
 ![Preview](https://raw.githubusercontent.com/seathasky/MattMinimalDPS/refs/heads/main/Preview.png)
 
