@@ -330,7 +330,7 @@ if LDB and LibDBIcon then
  descText:SetPoint("TOPLEFT", 15, -35)
  descText:SetPoint("TOPRIGHT", -15, -35)
  descText:SetFont(FONT_PATH, 10, FONT_FLAGS)
- descText:SetText("A minimal skin for the Blizzard's Damage Meter.")
+ descText:SetText("A minimal skin for Blizzard's Damage Meter.")
  descText:SetTextColor(0.8, 0.8, 0.8, 1)
  descText:SetWordWrap(true)
  
