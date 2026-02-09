@@ -1,0 +1,14 @@
+## Interface: 120000
+## Title: Matt's Minimal DPS
+## Notes: Minimal bar texture and font reskin for Blizzard damage meter
+## Author: Seathasky
+## Version: 1.0.0
+## IconTexture: Interface\AddOns\MattMinimalDPS\Images\mdps.png
+## SavedVariables: MattMinimalDPSDB
+## SavedVariablesPerCharacter: MattMinimalDPSDBPC
+
+Libs\LibStub\LibStub.lua
+Libs\LibDataBroker-1.1.lua
+Libs\LibDBIcon-1.0.lua
+
+MattMinimalDPS.lua
