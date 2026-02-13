@@ -3,8 +3,7 @@ local FONT_PATH="Interface\\AddOns\\MattMinimalDPS\\Fonts\\Naowh.ttf"
 local FONT_SIZE=12
 local FONT_FLAGS="OUTLINE"
 
--- TAINT PREVENTION: Never write custom keys to Blizzard frames.
--- Track our own state in a separate weak-keyed table so we don't taint Blizzard's frame tables.
+
 local mmdps_state = setmetatable({}, { __mode = "k" })
 
 local function m(h) if not h then return end if h.IsForbidden and h:IsForbidden() then return end if h.Hide then h:Hide() end if h.SetAlpha then h:SetAlpha(0) end end
@@ -15,31 +14,31 @@ local function b(w)
   w.Background:SetColorTexture(0,0,0,1)
   return
  end
- -- Use our own table to track the background texture, NEVER write to the Blizzard frame
+
  local state = mmdps_state[w]
  if not state then state = {} mmdps_state[w] = state end
  if not state.bg then
   local t = w:CreateTexture(nil,"BACKGROUND",nil,-8)
   t:SetAllPoints(w)
-  t:SetColorTexture(0,0,0,1)
   state.bg = t
  else
   if state.bg.SetColorTexture then state.bg:SetColorTexture(0,0,0,1) end
  end
 end
 
--- Apply Naowh font to a damage meter entry's Name and Value FontStrings (widget-only, no taint)
+-- Apply matt font
+
 local function applyEntryFont(entry)
- if not entry then return end
- pcall(function()
-  local nameFS = entry:GetStatusBar() and entry:GetStatusBar().Name
-  if nameFS and nameFS.SetFont then nameFS:SetFont(FONT_PATH, FONT_SIZE, FONT_FLAGS) end
-  local valueFS = entry:GetStatusBar() and entry:GetStatusBar().Value
-  if valueFS and valueFS.SetFont then valueFS:SetFont(FONT_PATH, FONT_SIZE, FONT_FLAGS) end
- end)
+    if not entry then return end
+    pcall(function()
+        local nameFS = entry:GetStatusBar() and entry:GetStatusBar().Name
+        if nameFS and nameFS.SetFont then nameFS:SetFont(FONT_PATH, FONT_SIZE, FONT_FLAGS) end
+        local valueFS = entry:GetStatusBar() and entry:GetStatusBar().Value
+        if valueFS and valueFS.SetFont then valueFS:SetFont(FONT_PATH, FONT_SIZE, FONT_FLAGS) end
+    end)
 end
 
--- Hook DamageMeterEntryMixin.Init once so every new/recycled entry gets the Naowh font
+
 local entryHookInstalled = false
 local function installEntryFontHook()
  if entryHookInstalled then return end
@@ -67,45 +66,71 @@ local function s(w)
   settings.Icon:SetDesaturation(1)
   settings.Icon:SetVertexColor(3, 3, 3, 1)
  end
+
  local sb = w.ScrollBox
  local header = w.HeaderBar or w.Header
  local insetL, insetR = 10, 10
  if sb and header then
   pcall(function() sb:ClearAllPoints(); sb:SetPoint("TOPLEFT", header, "BOTTOMLEFT", insetL, -5); sb:SetPoint("BOTTOMRIGHT", w, "BOTTOMRIGHT", -insetR, 6) end)
  end
- -- Apply Naowh font to header text elements (TypeName, SessionName, SessionTimer)
+
  pcall(function()
   local typeName = dropdown and dropdown.TypeName
   if typeName and typeName.SetFont then typeName:SetFont(FONT_PATH, FONT_SIZE, FONT_FLAGS); typeName:SetTextColor(1, 1, 1, 1) end
-  -- Also style the dropdown button's own Text FontString if present
+
   if dropdown and dropdown.Text and dropdown.Text.SetFont then dropdown.Text:SetFont(FONT_PATH, FONT_SIZE, FONT_FLAGS); dropdown.Text:SetTextColor(1, 1, 1, 1) end
   local sessionDD = w.SessionDropdown
   local sessionName = sessionDD and sessionDD.SessionName
-  if sessionName and sessionName.SetFont then sessionName:SetFont(FONT_PATH, FONT_SIZE, FONT_FLAGS); sessionName:SetTextColor(1, 1, 1, 1) end
-  if sessionDD and sessionDD.Text and sessionDD.Text.SetFont then sessionDD.Text:SetFont(FONT_PATH, FONT_SIZE, FONT_FLAGS); sessionDD.Text:SetTextColor(1, 1, 1, 1) end
-  local sessionTimer = w.SessionTimer
-  if sessionTimer and sessionTimer.SetFont then sessionTimer:SetFont(FONT_PATH, FONT_SIZE, FONT_FLAGS); sessionTimer:SetTextColor(1, 1, 1, 1) end
-  local notActive = w.NotActive
-  if notActive and notActive.SetFont then notActive:SetFont(FONT_PATH, FONT_SIZE, FONT_FLAGS); notActive:SetTextColor(1, 1, 1, 1) end
+
+    if sessionName and not sessionName.__mmdpsHooked then
+        pcall(function() if sessionName.SetTextColor then sessionName:SetTextColor(1, 1, 1, 1) end end)
+        hooksecurefunc(sessionName, "SetTextColor", function(fs, ...)
+            if fs.__mmdpsColorGuard then return end
+            fs.__mmdpsColorGuard = true
+            if fs.SetTextColor then fs:SetTextColor(1, 1, 1, 1) end
+            fs.__mmdpsColorGuard = false
+        end)
+        hooksecurefunc(sessionName, "SetText", function(fs, ...)
+            if fs.__mmdpsColorGuard then return end
+            fs.__mmdpsColorGuard = true
+            if fs.SetTextColor then fs:SetTextColor(1, 1, 1, 1) end
+            fs.__mmdpsColorGuard = false
+        end)
+        sessionName.__mmdpsHooked = true
+    end
+    local sessionTimer = w.SessionTimer
+    if sessionTimer and not sessionTimer.__mmdpsHooked then
+        pcall(function() if sessionTimer.SetTextColor then sessionTimer:SetTextColor(1, 1, 1, 1) end end)
+        hooksecurefunc(sessionTimer, "SetTextColor", function(fs, ...)
+            if fs.__mmdpsColorGuard then return end
+            fs.__mmdpsColorGuard = true
+            if fs.SetTextColor then fs:SetTextColor(1, 1, 1, 1) end
+            fs.__mmdpsColorGuard = false
+        end)
+        hooksecurefunc(sessionTimer, "SetText", function(fs, ...)
+            if fs.__mmdpsColorGuard then return end
+            fs.__mmdpsColorGuard = true
+            if fs.SetTextColor then fs:SetTextColor(1, 1, 1, 1) end
+            fs.__mmdpsColorGuard = false
+        end)
+        sessionTimer.__mmdpsHooked = true
+    end
+    pcall(function()
+     for _, frame in sb:EnumerateFrames() do
+        applyEntryFont(frame)
+     end
+    end)
  end)
- -- Apply Naowh font to all currently visible entry frames in the ScrollBox
- if sb and sb.EnumerateFrames then
-  pcall(function()
-   for _, frame in sb:EnumerateFrames() do
-    applyEntryFont(frame)
-   end
-  end)
- end
 end
 
 local function apply()
  local dm = _G.DamageMeter
  if not dm then return end
- -- Install the entry font hook once DamageMeterEntryMixin is available
+
  installEntryFontHook()
- -- Defer so we're never in Blizzard's call stack
+
  C_Timer.After(0, function()
-  -- Find session windows by name from _G instead of calling dm:ForEachSessionWindow (avoids tainting dm's execution path)
+
   for i = 1, 10 do
    local w = _G["DamageMeterSessionWindow"..i]
    if w then s(w) end
@@ -116,19 +141,35 @@ end
 MattMinimalDPSDB = MattMinimalDPSDB or {}
 MattMinimalDPSDB.useCustomTheme = MattMinimalDPSDB.useCustomTheme ~= false 
 
--- TAINT NOTE: Do NOT call dm:SetStyle, dm:SetBarSpacing, dm:SetShowBarIcons, etc. from addon code.
--- Those methods chain into ForEachEntryFrame -> frame:SetStyle(style) which writes self.style = style
--- to the entry frame table from addon execution context, tainting the entire entry and causing
--- "attempt to compare local 'text' (a secret string value tainted by 'MattMinimalDPS')" in UpdateName.
--- Users should configure meter settings via Blizzard's built-in settings dropdown instead.
-
--- Options panel (settings dropdown only, no "reset defaults" - calling dm methods taints entry frames)
 
 f:RegisterEvent("PLAYER_LOGIN")
 f:SetScript("OnEvent",function(_, ev)
  if MattMinimalDPSDB.useCustomTheme then apply() end
  if not f._t then f._t=C_Timer.NewTicker(2, function() if MattMinimalDPSDB.useCustomTheme then apply() end end) end
  if not f._retry then f._retry = C_Timer.NewTicker(1, function() if MattMinimalDPSDB.useCustomTheme then apply() end end, 8) end
+    -- Auto reset logic
+    if not f._resetEventsHooked then
+        f:RegisterEvent("PLAYER_ENTERING_WORLD")
+        f:RegisterEvent("CHALLENGE_MODE_START")
+        f._resetEventsHooked = true
+    end
+    if ev == "PLAYER_ENTERING_WORLD" or ev == "CHALLENGE_MODE_START" then
+        local mode = MattMinimalDPSDB and MattMinimalDPSDB.resetMode or "instance"
+        if mode == "off" then
+            return
+        elseif mode == "instance" and ev == "PLAYER_ENTERING_WORLD" then
+            local inInstance, instanceType = IsInInstance()
+            if inInstance and (instanceType == "party" or instanceType == "raid" or instanceType == "scenario") then
+                if C_DamageMeter and C_DamageMeter.ResetAllCombatSessions then
+                    C_DamageMeter.ResetAllCombatSessions()
+                end
+            end
+        elseif mode == "mythic" and ev == "CHALLENGE_MODE_START" then
+            if C_DamageMeter and C_DamageMeter.ResetAllCombatSessions then
+                C_DamageMeter.ResetAllCombatSessions()
+            end
+        end
+    end
 end)
 SLASH_MATTMINIMALDPS1="/mattminimaldps"
 SLASH_MATTMINIMALDPS2="/mmdps"
@@ -159,7 +200,7 @@ if LDB and LibDBIcon then
      end
     end
    elseif button == "RightButton" then
-    -- Toggle visibility via SetShown (don't write to dm.visibility - causes taint)
+
     local dm = _G.DamageMeter
     if dm then
      if dm:IsShown() then
@@ -184,7 +225,7 @@ if LDB and LibDBIcon then
  LibDBIcon:Register("MattMinimalDPS", minimapLDB, MattMinimalDPSDB.minimapIcon)
  
  local settingsFrame = CreateFrame("Frame", "MattMinimalDPSSettingsFrame", UIParent, "BackdropTemplate")
- settingsFrame:SetSize(400, 200)
+ settingsFrame:SetSize(400, 250)
  settingsFrame:SetPoint("CENTER")
  settingsFrame:SetMovable(true)
  settingsFrame:EnableMouse(true)
@@ -242,6 +283,79 @@ if LDB and LibDBIcon then
  taglineText:SetText("Does this thing really need any other options?")
  taglineText:SetTextColor(0.5, 0.5, 0.5, 1)
  taglineText:SetWordWrap(true)
+-- Reset mode dropdown
+local resetModeLabel = settingsFrame:CreateFontString(nil, "OVERLAY")
+resetModeLabel:SetPoint("TOPLEFT", 20, -160)
+resetModeLabel:SetFont(FONT_PATH, FONT_SIZE, FONT_FLAGS)
+resetModeLabel:SetText("Auto Reset Mode:")
+resetModeLabel:SetTextColor(1, 1, 1, 1)
+
+local resetModeDropdown = CreateFrame("Frame", nil, settingsFrame, "UIDropDownMenuTemplate")
+resetModeDropdown:SetPoint("TOPLEFT", resetModeLabel, "BOTTOMLEFT", -15, -2)
+local resetModes = {
+    { text = "Off", value = "off" },
+    { text = "On Instance Entry", value = "instance" },
+    { text = "On Mythic+ Start", value = "mythic" },
+}
+
+local function SetResetMode(value)
+    MattMinimalDPSDB = MattMinimalDPSDB or {}
+    MattMinimalDPSDB.resetMode = value
+end
+
+local function GetResetMode()
+    MattMinimalDPSDB = MattMinimalDPSDB or {}
+    return MattMinimalDPSDB.resetMode or "mythic"
+end
+
+UIDropDownMenu_Initialize(resetModeDropdown, function(self, level, menuList)
+    local selected = GetResetMode()
+    for _, mode in ipairs(resetModes) do
+        local info = UIDropDownMenu_CreateInfo()
+        info.text = mode.text
+        info.value = mode.value
+        info.func = function()
+            SetResetMode(mode.value)
+            UIDropDownMenu_SetSelectedValue(resetModeDropdown, mode.value)
+            UIDropDownMenu_SetText(resetModeDropdown, mode.text)
+        end
+        info.checked = (mode.value == selected)
+        UIDropDownMenu_AddButton(info)
+    end
+end)
+UIDropDownMenu_SetWidth(resetModeDropdown, 160)
+do
+    local selected = GetResetMode()
+    local selectedText = nil
+    for _, mode in ipairs(resetModes) do
+        if mode.value == selected then selectedText = mode.text break end
+    end
+    UIDropDownMenu_SetSelectedValue(resetModeDropdown, selected)
+    if selectedText then
+        UIDropDownMenu_SetText(resetModeDropdown, selectedText)
+    end
+end
+
+-- "Reset Now" button
+local resetNowBtn = CreateFrame("Button", nil, settingsFrame, "UIPanelButtonTemplate")
+resetNowBtn:SetSize(100, 22)
+resetNowBtn:SetPoint("LEFT", resetModeDropdown, "RIGHT", 12, 0)
+resetNowBtn:SetText("Reset Now")
+resetNowBtn:SetScript("OnClick", function()
+    pcall(function()
+        if C_DamageMeter and C_DamageMeter.ResetAllCombatSessions then
+            C_DamageMeter.ResetAllCombatSessions()
+        end
+    end)
+end)
+resetNowBtn:SetScript("OnEnter", function(self)
+    GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+    GameTooltip:SetText("Immediately reset Damage Meter sessions")
+    GameTooltip:Show()
+end)
+resetNowBtn:SetScript("OnLeave", function()
+    GameTooltip:Hide()
+end)
   
  local minimapCheckbox = CreateFrame("CheckButton", nil, settingsFrame, "UICheckButtonTemplate")
  minimapCheckbox:SetPoint("TOPLEFT", 20, -120)
@@ -292,18 +406,27 @@ if LDB and LibDBIcon then
   StaticPopup_Show("MATTMINIMALDPS_THEME_RELOAD")
  end)
  
- settingsFrame:SetScript("OnShow", function()
-  if MattMinimalDPSDB and MattMinimalDPSDB.minimapIcon then
-   minimapCheckbox:SetChecked(not MattMinimalDPSDB.minimapIcon.hide)
-  else
-   minimapCheckbox:SetChecked(true) 
-  end
-  themeCheckbox:SetChecked(MattMinimalDPSDB.useCustomTheme)
- end)
+settingsFrame:SetScript("OnShow", function()
+    if MattMinimalDPSDB and MattMinimalDPSDB.minimapIcon then
+        minimapCheckbox:SetChecked(not MattMinimalDPSDB.minimapIcon.hide)
+    else
+        minimapCheckbox:SetChecked(true)
+    end
+    themeCheckbox:SetChecked(MattMinimalDPSDB.useCustomTheme)
+    local selected = GetResetMode()
+    local selectedText = nil
+    for _, mode in ipairs(resetModes) do
+        if mode.value == selected then selectedText = mode.text break end
+    end
+    UIDropDownMenu_SetSelectedValue(resetModeDropdown, selected)
+    if selectedText then
+        UIDropDownMenu_SetText(resetModeDropdown, selectedText)
+    end
+end)
  
  local function forceOpenDamageMeter()
   pcall(function() SetCVar("damageMeterEnabled", "1") end)
-  -- Only use CVar + SetShown. Never call dm:RefreshLayout() (chains into entry frame writes and taints).
+
   local dm = _G.DamageMeter
   if dm then
    if dm.SetShown then pcall(dm.SetShown, dm, true) end
