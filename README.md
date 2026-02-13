@@ -5,7 +5,7 @@ A minimal skin for Blizzard's Damage Meter. Keep it clean, keep it minimal!
 
 **Modern Aesthetic:**
 
-Swaps out the bulky default DPS meter look for a sleek, borderless look with custom fonts and flat textures.
+Swaps out Blizzard's default DPS meter look for a sleek, borderless look with custom fonts and flat textures.
 
 **Auto-Reset**
 
