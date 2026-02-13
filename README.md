@@ -1,7 +1,7 @@
 # MattMinimalDPS
 A minimal skin for Blizzard's Damage Meter. Keep it clean, keep it minimal!
 
-# Features: 
+## Features: 
 
 Auto-Reset: Blizzard doesn’t auto-reset, so this does it for you. Choose between Off, Instance Entry, or Mythic+ Start, or do it manually via the "Reset Now" button in settings.
 
