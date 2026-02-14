@@ -5,13 +5,52 @@ local FONT_FLAGS="OUTLINE"
 
 
 local mmdps_state = setmetatable({}, { __mode = "k" })
+local BACKDROP_STYLES = {
+ transparent = { text = "Transparent", color = {0, 0, 0, 0} },
+ black = { text = "Black", color = {0, 0, 0, 1} },
+ white = { text = "White (Translucent)", color = {1, 1, 1, 0.18} },
+ brown = { text = "Dark Brown", color = {0.17, 0.11, 0.07, 0.65} },
+ gray = { text = "Gray", color = {0.16, 0.16, 0.16, 0.65} },
+}
+local BACKDROP_STYLE_ORDER = {"transparent", "white", "brown", "gray", "black"}
+local DEFAULT_BACKDROP_OPACITY = 0.65
+
+local function getBackdropStyle()
+ MattMinimalDPSDB = MattMinimalDPSDB or {}
+ local style = MattMinimalDPSDB.backdropStyle or "black"
+ if not BACKDROP_STYLES[style] then
+  style = "black"
+ end
+ return style
+end
+
+local function getBackdropOpacity()
+ MattMinimalDPSDB = MattMinimalDPSDB or {}
+ local opacity = tonumber(MattMinimalDPSDB.backdropOpacity)
+ if not opacity then
+  opacity = DEFAULT_BACKDROP_OPACITY
+ end
+ if opacity < 0 then opacity = 0 end
+ if opacity > 1 then opacity = 1 end
+ return opacity
+end
+
+local function getBackdropColor()
+ local style = getBackdropStyle()
+ local r, g, bA, baseAlpha = unpack(BACKDROP_STYLES[style].color)
+ if style == "transparent" then
+  return r, g, bA, 0
+ end
+ return r, g, bA, baseAlpha * getBackdropOpacity()
+end
 
 local function m(h) if not h then return end if h.IsForbidden and h:IsForbidden() then return end if h.Hide then h:Hide() end if h.SetAlpha then h:SetAlpha(0) end end
 
 local function b(w)
  if not w then return end
+ local r, g, bA, a = getBackdropColor()
  if w.Background and w.Background.SetColorTexture then
-  w.Background:SetColorTexture(0,0,0,1)
+  w.Background:SetColorTexture(r, g, bA, a)
   return
  end
 
@@ -21,9 +60,8 @@ local function b(w)
   local t = w:CreateTexture(nil,"BACKGROUND",nil,-8)
   t:SetAllPoints(w)
   state.bg = t
- else
-  if state.bg.SetColorTexture then state.bg:SetColorTexture(0,0,0,1) end
  end
+ if state.bg.SetColorTexture then state.bg:SetColorTexture(r, g, bA, a) end
 end
 
 -- Apply matt font
@@ -140,6 +178,8 @@ end
 
 MattMinimalDPSDB = MattMinimalDPSDB or {}
 MattMinimalDPSDB.useCustomTheme = MattMinimalDPSDB.useCustomTheme ~= false 
+MattMinimalDPSDB.backdropStyle = MattMinimalDPSDB.backdropStyle or "black"
+MattMinimalDPSDB.backdropOpacity = tonumber(MattMinimalDPSDB.backdropOpacity) or DEFAULT_BACKDROP_OPACITY
 
 
 f:RegisterEvent("PLAYER_LOGIN")
@@ -225,7 +265,7 @@ if LDB and LibDBIcon then
  LibDBIcon:Register("MattMinimalDPS", minimapLDB, MattMinimalDPSDB.minimapIcon)
  
  local settingsFrame = CreateFrame("Frame", "MattMinimalDPSSettingsFrame", UIParent, "BackdropTemplate")
- settingsFrame:SetSize(400, 250)
+ settingsFrame:SetSize(400, 340)
  settingsFrame:SetPoint("CENTER")
  settingsFrame:SetMovable(true)
  settingsFrame:EnableMouse(true)
@@ -307,6 +347,103 @@ local function GetResetMode()
     MattMinimalDPSDB = MattMinimalDPSDB or {}
     return MattMinimalDPSDB.resetMode or "mythic"
 end
+
+local backdropLabel = settingsFrame:CreateFontString(nil, "OVERLAY")
+backdropLabel:SetPoint("TOPLEFT", 20, -220)
+backdropLabel:SetFont(FONT_PATH, FONT_SIZE, FONT_FLAGS)
+backdropLabel:SetText("Backdrop Style:")
+backdropLabel:SetTextColor(1, 1, 1, 1)
+
+local backdropDropdown = CreateFrame("Frame", nil, settingsFrame, "UIDropDownMenuTemplate")
+backdropDropdown:SetPoint("TOPLEFT", backdropLabel, "BOTTOMLEFT", -15, -2)
+local opacitySliderLabel = settingsFrame:CreateFontString(nil, "OVERLAY")
+opacitySliderLabel:SetPoint("TOPLEFT", 20, -270)
+opacitySliderLabel:SetFont(FONT_PATH, FONT_SIZE, FONT_FLAGS)
+opacitySliderLabel:SetText("Backdrop Opacity:")
+opacitySliderLabel:SetTextColor(1, 1, 1, 1)
+
+local opacityValueText = settingsFrame:CreateFontString(nil, "OVERLAY")
+opacityValueText:SetPoint("LEFT", opacitySliderLabel, "RIGHT", 8, 0)
+opacityValueText:SetFont(FONT_PATH, FONT_SIZE, FONT_FLAGS)
+opacityValueText:SetTextColor(0.8, 0.8, 0.8, 1)
+
+local opacitySlider = CreateFrame("Slider", "MattMinimalDPSBackdropOpacitySlider", settingsFrame, "OptionsSliderTemplate")
+opacitySlider:SetPoint("TOPLEFT", opacitySliderLabel, "BOTTOMLEFT", 0, -8)
+opacitySlider:SetMinMaxValues(0, 1)
+opacitySlider:SetValueStep(0.05)
+opacitySlider:SetObeyStepOnDrag(true)
+opacitySlider:SetWidth(180)
+opacitySlider:SetHeight(16)
+_G[opacitySlider:GetName().."Low"]:SetText("0%")
+_G[opacitySlider:GetName().."High"]:SetText("100%")
+_G[opacitySlider:GetName().."Text"]:SetText("")
+
+local backdropUIUpdating = false
+local function RefreshBackdropOpacityUI()
+ backdropUIUpdating = true
+ local style = getBackdropStyle()
+ local opacity = getBackdropOpacity()
+ opacitySlider:SetValue(opacity)
+ if style == "transparent" then
+  opacitySlider:Disable()
+  opacityValueText:SetText("N/A")
+ else
+  opacitySlider:Enable()
+  opacityValueText:SetText(string.format("%d%%", math.floor(opacity * 100 + 0.5)))
+ end
+ backdropUIUpdating = false
+end
+
+local function SetBackdropStyle(style)
+ MattMinimalDPSDB = MattMinimalDPSDB or {}
+ MattMinimalDPSDB.backdropStyle = BACKDROP_STYLES[style] and style or "black"
+ RefreshBackdropOpacityUI()
+ if MattMinimalDPSDB.useCustomTheme then
+  apply()
+ end
+end
+
+local function GetBackdropStyleText(style)
+ if BACKDROP_STYLES[style] then
+  return BACKDROP_STYLES[style].text
+ end
+ return BACKDROP_STYLES.transparent.text
+end
+
+UIDropDownMenu_Initialize(backdropDropdown, function(self, level, menuList)
+ local selected = getBackdropStyle()
+ for _, style in ipairs(BACKDROP_STYLE_ORDER) do
+  local data = BACKDROP_STYLES[style]
+  local info = UIDropDownMenu_CreateInfo()
+  info.text = data.text
+  info.value = style
+  info.func = function()
+   SetBackdropStyle(style)
+   UIDropDownMenu_SetSelectedValue(backdropDropdown, style)
+   UIDropDownMenu_SetText(backdropDropdown, data.text)
+  end
+  info.checked = (style == selected)
+  UIDropDownMenu_AddButton(info)
+ end
+end)
+UIDropDownMenu_SetWidth(backdropDropdown, 160)
+do
+ local selectedStyle = getBackdropStyle()
+ UIDropDownMenu_SetSelectedValue(backdropDropdown, selectedStyle)
+ UIDropDownMenu_SetText(backdropDropdown, GetBackdropStyleText(selectedStyle))
+end
+
+opacitySlider:SetScript("OnValueChanged", function(self, value)
+ if backdropUIUpdating then return end
+ MattMinimalDPSDB = MattMinimalDPSDB or {}
+ local clamped = math.max(0, math.min(1, value or 1))
+ MattMinimalDPSDB.backdropOpacity = clamped
+ RefreshBackdropOpacityUI()
+ if getBackdropStyle() ~= "transparent" and MattMinimalDPSDB.useCustomTheme then
+  apply()
+ end
+end)
+RefreshBackdropOpacityUI()
 
 UIDropDownMenu_Initialize(resetModeDropdown, function(self, level, menuList)
     local selected = GetResetMode()
@@ -422,6 +559,10 @@ settingsFrame:SetScript("OnShow", function()
     if selectedText then
         UIDropDownMenu_SetText(resetModeDropdown, selectedText)
     end
+    local selectedStyle = getBackdropStyle()
+    UIDropDownMenu_SetSelectedValue(backdropDropdown, selectedStyle)
+    UIDropDownMenu_SetText(backdropDropdown, GetBackdropStyleText(selectedStyle))
+    RefreshBackdropOpacityUI()
 end)
  
  local function forceOpenDamageMeter()
