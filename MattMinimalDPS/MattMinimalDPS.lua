@@ -12,6 +12,7 @@ local LSM = LibStub and LibStub("LibSharedMedia-3.0", true)
 local FONT_MEDIA_TYPE = LSM and LSM.MediaType and LSM.MediaType.FONT or "font"
 local MMDPS_FONT_DEFAULT = "MMDPS Naowh"
 local fontValidationString = nil
+local fontApplyToken = 0
 local FONT_SIZE_KEYS = {"entryName", "entryValue", "typeLabel", "sessionName", "sessionTimer"}
 local FONT_SIZE_DEFAULTS = {
  entryName = 12,
@@ -69,6 +70,38 @@ local function IsUsableFontPath(fontPath)
  return ok and applied ~= false
 end
 
+local function MMDPS_SetFontSafe(region, fontPath, size, flags)
+ if not region or not region.SetFont then return false end
+ local requestedPath = (type(fontPath) == "string" and fontPath ~= "") and fontPath or DEFAULT_FONT_PATH
+ local requestedSize = tonumber(size) or DEFAULT_FONT_SIZE
+ local requestedFlags = flags or ""
+
+ local ok, applied = pcall(region.SetFont, region, requestedPath, requestedSize, requestedFlags)
+ if ok and applied ~= false then
+  return true
+ end
+
+ if requestedFlags ~= "" then
+  ok, applied = pcall(region.SetFont, region, requestedPath, requestedSize, "")
+  if ok and applied ~= false then
+   return true
+  end
+ end
+
+ if requestedPath ~= DEFAULT_FONT_PATH then
+  ok, applied = pcall(region.SetFont, region, DEFAULT_FONT_PATH, requestedSize, requestedFlags)
+  if ok and applied ~= false then
+   return true
+  end
+  ok, applied = pcall(region.SetFont, region, DEFAULT_FONT_PATH, requestedSize, "")
+  if ok and applied ~= false then
+   return true
+  end
+ end
+
+ return false
+end
+
 local function MMDPS_RegisterFontMedia()
  if not LSM then return end
  if not LSM:IsValid(FONT_MEDIA_TYPE, MMDPS_FONT_DEFAULT) then
@@ -87,9 +120,15 @@ local function MMDPS_GetGlobalFontPathByName(fontName)
  return DEFAULT_FONT_PATH, selected == MMDPS_FONT_DEFAULT
 end
 
+local function MMDPS_EnsureFontSelection()
+ MattMinimalDPSDB = MattMinimalDPSDB or {}
+ local selected = NormalizeMediaName(MattMinimalDPSDB.globalFont) or MMDPS_FONT_DEFAULT
+ MattMinimalDPSDB.globalFont = selected
+ return selected
+end
+
 local function MMDPS_GetGlobalFontName()
- local selected = NormalizeMediaName(MattMinimalDPSDB and MattMinimalDPSDB.globalFont)
- return selected or MMDPS_FONT_DEFAULT
+ return MMDPS_EnsureFontSelection()
 end
 
 local function MMDPS_GetGlobalFontPath()
@@ -99,18 +138,29 @@ end
 
 local function MMDPS_GetFontOptions()
  local list = {}
- if LSM then
+ local seenNames = {}
+ local seenPaths = {}
+  if LSM then
   local names = LSM:List(FONT_MEDIA_TYPE) or {}
   for _, name in ipairs(names) do
    local normalized = NormalizeMediaName(name)
-   if normalized then
-    list[#list + 1] = normalized
+   if normalized and not seenNames[normalized] then
+    local fetched = LSM:Fetch(FONT_MEDIA_TYPE, normalized, true)
+    if fetched and IsUsableFontPath(fetched) then
+     local pathKey = tostring(fetched):lower()
+     if not seenPaths[pathKey] then
+      seenNames[normalized] = true
+      seenPaths[pathKey] = true
+      list[#list + 1] = normalized
+     end
+    end
    end
   end
  end
- if #list == 0 then
+ if #list == 0 or not seenNames[MMDPS_FONT_DEFAULT] then
   list[#list + 1] = MMDPS_FONT_DEFAULT
  end
+ table.sort(list, function(a, b) return tostring(a):lower() < tostring(b):lower() end)
  return list
 end
 
@@ -179,10 +229,11 @@ end
 local function applyEntryFont(entry)
     if not entry then return end
     pcall(function()
-        local nameFS = entry:GetStatusBar() and entry:GetStatusBar().Name
-        if nameFS and nameFS.SetFont then nameFS:SetFont(FONT_PATH, GetItemFontSize("entryName"), FONT_FLAGS) end
-        local valueFS = entry:GetStatusBar() and entry:GetStatusBar().Value
-        if valueFS and valueFS.SetFont then valueFS:SetFont(FONT_PATH, GetItemFontSize("entryValue"), FONT_FLAGS) end
+        local statusBar = entry.GetStatusBar and entry:GetStatusBar()
+        local nameFS = statusBar and statusBar.Name
+        if nameFS and nameFS.SetFont then MMDPS_SetFontSafe(nameFS, FONT_PATH, GetItemFontSize("entryName"), FONT_FLAGS) end
+        local valueFS = statusBar and statusBar.Value
+        if valueFS and valueFS.SetFont then MMDPS_SetFontSafe(valueFS, FONT_PATH, GetItemFontSize("entryValue"), FONT_FLAGS) end
     end)
 end
 
@@ -224,17 +275,20 @@ local function s(w)
 
  pcall(function()
   local typeName = dropdown and dropdown.TypeName
-  if typeName and typeName.SetFont then typeName:SetFont(FONT_PATH, GetItemFontSize("typeLabel"), FONT_FLAGS); typeName:SetTextColor(1, 1, 1, 1) end
+  if typeName and typeName.SetFont then MMDPS_SetFontSafe(typeName, FONT_PATH, GetItemFontSize("typeLabel"), FONT_FLAGS); typeName:SetTextColor(1, 1, 1, 1) end
 
-  if dropdown and dropdown.Text and dropdown.Text.SetFont then dropdown.Text:SetFont(FONT_PATH, GetItemFontSize("typeLabel"), FONT_FLAGS); dropdown.Text:SetTextColor(1, 1, 1, 1) end
+  if dropdown and dropdown.Text and dropdown.Text.SetFont then MMDPS_SetFontSafe(dropdown.Text, FONT_PATH, GetItemFontSize("typeLabel"), FONT_FLAGS); dropdown.Text:SetTextColor(1, 1, 1, 1) end
   local sessionDD = w.SessionDropdown
   local sessionName = sessionDD and sessionDD.SessionName
 
+  if sessionName then
+   pcall(function()
+    if sessionName.SetTextColor then sessionName:SetTextColor(1, 1, 1, 1) end
+    if sessionName.SetFont then MMDPS_SetFontSafe(sessionName, FONT_PATH, GetItemFontSize("sessionName"), FONT_FLAGS) end
+   end)
+  end
+
     if sessionName and not sessionName.__mmdpsHooked then
-        pcall(function()
-            if sessionName.SetTextColor then sessionName:SetTextColor(1, 1, 1, 1) end
-            if sessionName.SetFont then sessionName:SetFont(FONT_PATH, GetItemFontSize("sessionName"), FONT_FLAGS) end
-        end)
         hooksecurefunc(sessionName, "SetTextColor", function(fs, ...)
             if fs.__mmdpsColorGuard then return end
             fs.__mmdpsColorGuard = true
@@ -244,14 +298,14 @@ local function s(w)
         hooksecurefunc(sessionName, "SetFont", function(fs, _, _, flags)
             if fs.__mmdpsFontGuard then return end
             fs.__mmdpsFontGuard = true
-            if fs.SetFont then fs:SetFont(FONT_PATH, GetItemFontSize("sessionName"), flags or FONT_FLAGS) end
+            if fs.SetFont then MMDPS_SetFontSafe(fs, FONT_PATH, GetItemFontSize("sessionName"), flags or FONT_FLAGS) end
             fs.__mmdpsFontGuard = false
         end)
         hooksecurefunc(sessionName, "SetText", function(fs, ...)
             if fs.__mmdpsColorGuard or fs.__mmdpsFontGuard then return end
             fs.__mmdpsColorGuard = true
             fs.__mmdpsFontGuard = true
-            if fs.SetFont then fs:SetFont(FONT_PATH, GetItemFontSize("sessionName"), FONT_FLAGS) end
+            if fs.SetFont then MMDPS_SetFontSafe(fs, FONT_PATH, GetItemFontSize("sessionName"), FONT_FLAGS) end
             if fs.SetTextColor then fs:SetTextColor(1, 1, 1, 1) end
             fs.__mmdpsFontGuard = false
             fs.__mmdpsColorGuard = false
@@ -259,11 +313,13 @@ local function s(w)
         sessionName.__mmdpsHooked = true
     end
     local sessionTimer = w.SessionTimer
-    if sessionTimer and not sessionTimer.__mmdpsHooked then
+    if sessionTimer then
         pcall(function()
             if sessionTimer.SetTextColor then sessionTimer:SetTextColor(1, 1, 1, 1) end
-            if sessionTimer.SetFont then sessionTimer:SetFont(FONT_PATH, GetItemFontSize("sessionTimer"), FONT_FLAGS) end
+            if sessionTimer.SetFont then MMDPS_SetFontSafe(sessionTimer, FONT_PATH, GetItemFontSize("sessionTimer"), FONT_FLAGS) end
         end)
+    end
+    if sessionTimer and not sessionTimer.__mmdpsHooked then
         hooksecurefunc(sessionTimer, "SetTextColor", function(fs, ...)
             if fs.__mmdpsColorGuard then return end
             fs.__mmdpsColorGuard = true
@@ -273,14 +329,14 @@ local function s(w)
         hooksecurefunc(sessionTimer, "SetFont", function(fs, _, _, flags)
             if fs.__mmdpsFontGuard then return end
             fs.__mmdpsFontGuard = true
-            if fs.SetFont then fs:SetFont(FONT_PATH, GetItemFontSize("sessionTimer"), flags or FONT_FLAGS) end
+            if fs.SetFont then MMDPS_SetFontSafe(fs, FONT_PATH, GetItemFontSize("sessionTimer"), flags or FONT_FLAGS) end
             fs.__mmdpsFontGuard = false
         end)
         hooksecurefunc(sessionTimer, "SetText", function(fs, ...)
             if fs.__mmdpsColorGuard or fs.__mmdpsFontGuard then return end
             fs.__mmdpsColorGuard = true
             fs.__mmdpsFontGuard = true
-            if fs.SetFont then fs:SetFont(FONT_PATH, GetItemFontSize("sessionTimer"), FONT_FLAGS) end
+            if fs.SetFont then MMDPS_SetFontSafe(fs, FONT_PATH, GetItemFontSize("sessionTimer"), FONT_FLAGS) end
             if fs.SetTextColor then fs:SetTextColor(1, 1, 1, 1) end
             fs.__mmdpsFontGuard = false
             fs.__mmdpsColorGuard = false
@@ -296,18 +352,18 @@ local function s(w)
 end
 
 local function apply()
- local dm = _G.DamageMeter
- if not dm then return end
-
  installEntryFontHook()
 
- C_Timer.After(0, function()
-
-  for i = 1, 10 do
+ local function ApplyToSessionWindows()
+  for i = 1, 40 do
    local w = _G["DamageMeterSessionWindow"..i]
    if w then s(w) end
   end
- end)
+ end
+
+ ApplyToSessionWindows()
+ C_Timer.After(0, ApplyToSessionWindows)
+ C_Timer.After(0.25, ApplyToSessionWindows)
 end
 
 local function MMDPS_SetGlobalFont(fontName)
@@ -315,9 +371,52 @@ local function MMDPS_SetGlobalFont(fontName)
  if not fontName then return end
  MattMinimalDPSDB = MattMinimalDPSDB or {}
  MattMinimalDPSDB.globalFont = fontName
- FONT_PATH = MMDPS_GetGlobalFontPath()
+ local resolvedPath, matched = MMDPS_GetGlobalFontPathByName(fontName)
+ FONT_PATH = resolvedPath or FONT_PATH
+ fontApplyToken = fontApplyToken + 1
+ local thisToken = fontApplyToken
  if MattMinimalDPSDB.useCustomTheme then
   apply()
+ end
+
+ -- Force a short burst of reapplies on every font switch so late UI updates
+ -- inside Damage Meter don't revert or miss the newly selected font.
+ if C_Timer and C_Timer.After then
+  local burstAttempts = 0
+  local function BurstApply()
+   burstAttempts = burstAttempts + 1
+   if thisToken ~= fontApplyToken then return end
+   if not MattMinimalDPSDB or MattMinimalDPSDB.globalFont ~= fontName then return end
+   if MattMinimalDPSDB.useCustomTheme then
+    apply()
+   end
+   if burstAttempts < 12 then
+    C_Timer.After(0.1, BurstApply)
+   end
+  end
+  C_Timer.After(0.05, BurstApply)
+ end
+
+ if (not matched) and C_Timer and C_Timer.After then
+  local attempts = 0
+  local function RetryApply()
+   attempts = attempts + 1
+   if thisToken ~= fontApplyToken then return end
+   if not MattMinimalDPSDB or MattMinimalDPSDB.globalFont ~= fontName then return end
+
+   local retryPath, retryMatched = MMDPS_GetGlobalFontPathByName(fontName)
+   if retryPath then
+    FONT_PATH = retryPath
+   end
+
+   if MattMinimalDPSDB.useCustomTheme then
+    apply()
+   end
+   if (not retryMatched) and attempts < 40 then
+    C_Timer.After(0.2, RetryApply)
+   end
+  end
+  C_Timer.After(0.2, RetryApply)
  end
 end
 
@@ -352,9 +451,12 @@ if LSM and LSM.RegisterCallback then
  LSM.RegisterCallback("MMDPS_SHARED_MEDIA_WATCHER", "LibSharedMedia_Registered", function(eventName, mediaType, mediaKey)
   if eventName ~= "LibSharedMedia_Registered" then return end
   if mediaType ~= FONT_MEDIA_TYPE then return end
-  if NormalizeMediaName(mediaKey) ~= NormalizeMediaName(MattMinimalDPSDB and MattMinimalDPSDB.globalFont) then return end
+  if not MattMinimalDPSDB then return end
+  local selected = NormalizeMediaName(MattMinimalDPSDB.globalFont)
+  local registered = NormalizeMediaName(mediaKey)
+  if not selected or not registered or selected ~= registered then return end
   FONT_PATH = MMDPS_GetGlobalFontPath()
-  if MattMinimalDPSDB and MattMinimalDPSDB.useCustomTheme then
+  if MattMinimalDPSDB.useCustomTheme then
    apply()
   end
  end)
@@ -619,6 +721,27 @@ if LDB and LibDBIcon then
   return NormalizeMediaName(fontName) or MMDPS_FONT_DEFAULT
  end
 
+ local function RefreshFontDropdownMenu()
+  UIDropDownMenu_Initialize(fontDropdown, function(self, level, menuList)
+   local selected = MMDPS_GetGlobalFontName()
+   for _, fontName in ipairs(MMDPS_GetFontOptions()) do
+    local selectedFontName = fontName
+    local info = UIDropDownMenu_CreateInfo()
+    info.text = selectedFontName
+    info.value = selectedFontName
+    info.arg1 = selectedFontName
+    info.func = function(_, arg1)
+     local chosen = NormalizeMediaName(arg1) or selectedFontName
+     MMDPS_SetGlobalFont(chosen)
+     UIDropDownMenu_SetSelectedValue(fontDropdown, chosen)
+     UIDropDownMenu_SetText(fontDropdown, GetFontDropdownText(chosen))
+    end
+    info.checked = (selectedFontName == selected)
+    UIDropDownMenu_AddButton(info)
+   end
+  end)
+ end
+
  local fontScaleTitle = panes.appearance:CreateFontString(nil, "OVERLAY")
  fontScaleTitle:SetPoint("TOPLEFT", 0, -56)
  fontScaleTitle:SetFont(GUI_FONT_PATH, GUI_FONT_SIZE, GUI_FONT_FLAGS)
@@ -764,16 +887,17 @@ if LDB and LibDBIcon then
 UIDropDownMenu_Initialize(backdropDropdown, function(self, level, menuList)
  local selected = getBackdropStyle()
  for _, style in ipairs(BACKDROP_STYLE_ORDER) do
+  local styleValue = style
   local data = BACKDROP_STYLES[style]
   local info = UIDropDownMenu_CreateInfo()
   info.text = data.text
-  info.value = style
+  info.value = styleValue
   info.func = function()
-   SetBackdropStyle(style)
-   UIDropDownMenu_SetSelectedValue(backdropDropdown, style)
+   SetBackdropStyle(styleValue)
+   UIDropDownMenu_SetSelectedValue(backdropDropdown, styleValue)
    UIDropDownMenu_SetText(backdropDropdown, data.text)
   end
-  info.checked = (style == selected)
+  info.checked = (styleValue == selected)
   UIDropDownMenu_AddButton(info)
  end
 end)
@@ -784,21 +908,7 @@ do
  UIDropDownMenu_SetText(backdropDropdown, GetBackdropStyleText(selectedStyle))
 end
 
-UIDropDownMenu_Initialize(fontDropdown, function(self, level, menuList)
- local selected = MMDPS_GetGlobalFontName()
- for _, fontName in ipairs(MMDPS_GetFontOptions()) do
-  local info = UIDropDownMenu_CreateInfo()
-  info.text = fontName
-  info.value = fontName
-  info.func = function()
-   MMDPS_SetGlobalFont(fontName)
-   UIDropDownMenu_SetSelectedValue(fontDropdown, fontName)
-   UIDropDownMenu_SetText(fontDropdown, GetFontDropdownText(fontName))
-  end
-  info.checked = (fontName == selected)
-  UIDropDownMenu_AddButton(info)
- end
-end)
+RefreshFontDropdownMenu()
 UIDropDownMenu_SetWidth(fontDropdown, 190)
 do
  local selectedFont = MMDPS_GetGlobalFontName()
@@ -945,6 +1055,7 @@ end)
 	    local selectedStyle = getBackdropStyle()
 	    UIDropDownMenu_SetSelectedValue(backdropDropdown, selectedStyle)
 	    UIDropDownMenu_SetText(backdropDropdown, GetBackdropStyleText(selectedStyle))
+	    RefreshFontDropdownMenu()
 	    local selectedFont = MMDPS_GetGlobalFontName()
 	    UIDropDownMenu_SetSelectedValue(fontDropdown, selectedFont)
 	    UIDropDownMenu_SetText(fontDropdown, GetFontDropdownText(selectedFont))
