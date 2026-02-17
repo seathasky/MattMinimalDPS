@@ -538,6 +538,7 @@ local function installEntryFontHook()
  local hookedAny = false
  local methodCandidates = {
   "Init",
+  "SetTextScale",
   "Update",
   "Refresh",
   "SetData",
@@ -618,9 +619,11 @@ local function s(w)
   end
 
   MMDPS_ApplyFontsToScrollBox(sb)
-  MMDPS_ApplyFontsToFrameTree(w)
-  if w.SourceWindow then
-   MMDPS_ApplyFontsToFrameTree(w.SourceWindow)
+  local sourceWindow = w.SourceWindow
+  if sourceWindow then
+   local sourceSB = sourceWindow.ScrollBox or (sourceWindow.GetScrollBox and sourceWindow:GetScrollBox())
+   MMDPS_HookScrollBoxFontRefresh(sourceSB)
+   MMDPS_ApplyFontsToScrollBox(sourceSB)
   end
   end)
 end
@@ -926,7 +929,6 @@ f:SetScript("OnEvent",function(_, ev, arg1)
   end
  end
  if MattMinimalDPSDB and MattMinimalDPSDB.useCustomTheme then MMDPS_ApplyNowOrDefer() end
- if not f._t then f._t=C_Timer.NewTicker(2, function() if MattMinimalDPSDB and MattMinimalDPSDB.useCustomTheme then MMDPS_ApplyNowOrDefer() end end) end
  if not f._retry then f._retry = C_Timer.NewTicker(1, function() if MattMinimalDPSDB and MattMinimalDPSDB.useCustomTheme then MMDPS_ApplyNowOrDefer() end end, 8) end
     -- Auto reset logic
     if not f._resetEventsHooked then
@@ -1640,11 +1642,13 @@ do
  SetFontDropdownDisplay(selectedFont)
 end
 for key, widgets in pairs(fontSizeWidgets) do
+ local itemKey = key
+ local itemWidgets = widgets
  widgets.slider:SetScript("OnValueChanged", function(self, value)
   if fontSizeUIUpdating then return end
   local size = ClampFontSize(value)
-  widgets.valueText:SetText(tostring(size))
-  MMDPS_SetFontSizeForItem(key, size)
+  itemWidgets.valueText:SetText(tostring(size))
+  MMDPS_SetFontSizeForItem(itemKey, size)
  end)
 end
 RefreshFontSizeUI()
@@ -1664,15 +1668,17 @@ RefreshBackdropOpacityUI()
 UIDropDownMenu_Initialize(resetModeDropdown, function(self, level, menuList)
     local selected = GetResetMode()
     for _, mode in ipairs(resetModes) do
+        local modeValue = mode.value
+        local modeText = mode.text
         local info = UIDropDownMenu_CreateInfo()
-        info.text = mode.text
-        info.value = mode.value
+        info.text = modeText
+        info.value = modeValue
         info.func = function()
-            SetResetMode(mode.value)
-            UIDropDownMenu_SetSelectedValue(resetModeDropdown, mode.value)
-            UIDropDownMenu_SetText(resetModeDropdown, mode.text)
+            SetResetMode(modeValue)
+            UIDropDownMenu_SetSelectedValue(resetModeDropdown, modeValue)
+            UIDropDownMenu_SetText(resetModeDropdown, modeText)
         end
-        info.checked = (mode.value == selected)
+        info.checked = (modeValue == selected)
         UIDropDownMenu_AddButton(info)
     end
 end)
