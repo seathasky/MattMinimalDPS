@@ -628,7 +628,26 @@ local function s(w)
   end)
 end
 
+local MMDPS_ApplyNowOrDefer
+local mmdpsDamageMeterWindowHookInstalled = false
+local function MMDPS_InstallDamageMeterWindowHook()
+ if mmdpsDamageMeterWindowHookInstalled then return end
+ if not hooksecurefunc then return end
+ local dm = _G.DamageMeter
+ if not dm then return end
+ if type(dm.SetupSessionWindow) ~= "function" then return end
+
+ hooksecurefunc(dm, "SetupSessionWindow", function()
+  if MattMinimalDPSDB and MattMinimalDPSDB.useCustomTheme then
+   MMDPS_ApplyNowOrDefer()
+  end
+ end)
+
+ mmdpsDamageMeterWindowHookInstalled = true
+end
+
 local function apply()
+ MMDPS_InstallDamageMeterWindowHook()
  installEntryFontHook()
 
  local function ApplyToSessionWindows()
@@ -646,7 +665,7 @@ local function apply()
 end
 
 local pendingDeferredApply = false
-local function MMDPS_ApplyNowOrDefer()
+MMDPS_ApplyNowOrDefer = function()
  if InCombatLockdown and InCombatLockdown() then
   pendingDeferredApply = true
   return false
