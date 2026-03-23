@@ -336,6 +336,15 @@ local function MMDPS_GetFontOptions()
 end
 
 local mmdps_state = setmetatable({}, { __mode = "k" })
+local pendingMouseoverRefreshAfterCombat = false
+local MMDPS_EXPERIMENTAL_COMBAT_MOUSEOVER = true
+local HEADER_DIVIDER_COLOR = { 1, 1, 1, 0.18 }
+local HEADER_DIVIDER_THICKNESS = 1
+local HEADER_SHADE_RGB = { 0, 0, 0 }
+local HEADER_BUTTON_GAP = 6
+local HEADER_BUTTON_RIGHT_INSET = -18
+local HEADER_BUTTON_SIZE = 24
+local HEADER_BUTTON_ICON_SIZE = 16
 local BACKDROP_STYLES = {
  transparent = { text = "Transparent", color = {0, 0, 0, 0} },
  black = { text = "Black", color = {0, 0, 0, 1} },
@@ -345,6 +354,7 @@ local BACKDROP_STYLES = {
 }
 local BACKDROP_STYLE_ORDER = {"transparent", "white", "brown", "gray", "black"}
 local DEFAULT_BACKDROP_OPACITY = 0.65
+local DEFAULT_TITLE_OPACITY = 0.22
 
 local function getBackdropStyle()
  MattMinimalDPSDB = MattMinimalDPSDB or {}
@@ -375,6 +385,27 @@ local function getBackdropColor()
  return r, g, bA, baseAlpha * getBackdropOpacity()
 end
 
+local function getTitleOpacity()
+ MattMinimalDPSDB = MattMinimalDPSDB or {}
+ local opacity = tonumber(MattMinimalDPSDB.titleOpacity)
+ if not opacity then
+  opacity = DEFAULT_TITLE_OPACITY
+ end
+ if opacity < 0 then opacity = 0 end
+ if opacity > 1 then opacity = 1 end
+ return opacity
+end
+
+local function getMouseoverButtonsEnabled()
+ MattMinimalDPSDB = MattMinimalDPSDB or {}
+ return MattMinimalDPSDB.mouseoverButtons ~= false
+end
+
+local function getShowSessionInTypeLabel()
+ MattMinimalDPSDB = MattMinimalDPSDB or {}
+ return MattMinimalDPSDB.showSessionInTypeLabel ~= false
+end
+
 local function m(h) if not h then return end if h.IsForbidden and h:IsForbidden() then return end if h.Hide then h:Hide() end if h.SetAlpha then h:SetAlpha(0) end end
 
 local function b(w)
@@ -393,6 +424,309 @@ local function b(w)
   state.bg = t
  end
  if state.bg.SetColorTexture then state.bg:SetColorTexture(r, g, bA, a) end
+end
+
+local function MMDPS_SetFrameMouseoverAlpha(frame, alpha)
+ if not frame then return end
+ if frame.IsForbidden and frame:IsForbidden() then return end
+ if (not MMDPS_EXPERIMENTAL_COMBAT_MOUSEOVER) and InCombatLockdown and InCombatLockdown() and frame.IsProtected and frame:IsProtected() then return end
+
+ if frame.SetAlpha then frame:SetAlpha(alpha) end
+ -- Some dropdown templates drive visuals via named regions that may not fully
+ -- follow parent alpha on every state transition.
+ local visualKeys = { "Background", "Arrow", "Icon", "Text", "SessionName" }
+ for _, key in ipairs(visualKeys) do
+  local region = frame[key]
+  if region and region.SetAlpha then
+   region:SetAlpha(alpha)
+  end
+ end
+ if frame.GetRegions then
+  for _, region in ipairs({frame:GetRegions()}) do
+   if region and region.SetAlpha then
+    region:SetAlpha(alpha)
+   end
+  end
+ end
+end
+
+local mmdpsMouseoverTicker = nil
+local mmdpsTypeLabelTicker = nil
+local mmdpsTypeLabelHooksInstalled = false
+
+local function MMDPS_IsCursorInFrameBounds(frame)
+ if not frame then return false end
+ if not (GetCursorPosition and UIParent and UIParent.GetEffectiveScale) then return false end
+ local left, right, top, bottom = frame:GetLeft(), frame:GetRight(), frame:GetTop(), frame:GetBottom()
+ if not (left and right and top and bottom) then return false end
+ local scale = UIParent:GetEffectiveScale() or 1
+ local cx, cy = GetCursorPosition()
+ cx, cy = cx / scale, cy / scale
+ return cx >= left and cx <= right and cy >= bottom and cy <= top
+end
+
+local function MMDPS_SetWindowButtonsAlpha(w, alpha)
+ local state = mmdps_state[w]
+ if not state then return end
+ if state.buttonFrames then
+  for frame in pairs(state.buttonFrames) do
+   MMDPS_SetFrameMouseoverAlpha(frame, alpha)
+  end
+ end
+end
+
+local function MMDPS_UpdateWindowButtonsMouseover(w)
+ if not w then return end
+ local state = mmdps_state[w]
+ if not state then return end
+
+ local mouseoverEnabled = getMouseoverButtonsEnabled()
+ local showButtons = not mouseoverEnabled
+ if mouseoverEnabled then
+  showButtons = MMDPS_IsCursorInFrameBounds(w)
+  if not showButtons and state.buttonFrames then
+   for frame in pairs(state.buttonFrames) do
+    if MMDPS_IsCursorInFrameBounds(frame) then
+     showButtons = true
+     break
+    end
+   end
+  end
+
+  local now = GetTime and GetTime() or 0
+  if showButtons then
+   state.lastHoverTime = now
+  elseif state.lastHoverTime and (now - state.lastHoverTime) < 0.18 then
+   -- Small linger prevents rapid flicker when cursor rides frame edges.
+   showButtons = true
+  end
+ else
+  state.lastHoverTime = nil
+ end
+
+ if state.lastShowButtons ~= showButtons then
+  state.lastShowButtons = showButtons
+  MMDPS_SetWindowButtonsAlpha(w, showButtons and 1 or 0)
+ end
+
+ local sessionTimer = w.SessionTimer
+ if sessionTimer then
+  local showTimer = not showButtons
+  if sessionTimer.SetShown then
+   sessionTimer:SetShown(showTimer)
+  elseif sessionTimer.SetAlpha then
+   sessionTimer:SetAlpha(showTimer and 1 or 0)
+  end
+ end
+end
+
+local function MMDPS_UpdateAllWindowButtonsMouseover()
+ if (not MMDPS_EXPERIMENTAL_COMBAT_MOUSEOVER) and InCombatLockdown and InCombatLockdown() then
+  pendingMouseoverRefreshAfterCombat = true
+  return
+ end
+ for i = 1, 40 do
+  local w = _G["DamageMeterSessionWindow"..i]
+  if w then
+   MMDPS_UpdateWindowButtonsMouseover(w)
+  end
+ end
+end
+
+local function MMDPS_StartMouseoverTicker()
+ if mmdpsMouseoverTicker then return end
+ if not (C_Timer and C_Timer.NewTicker) then return end
+ mmdpsMouseoverTicker = C_Timer.NewTicker(0.08, function()
+  if MattMinimalDPSDB and MattMinimalDPSDB.useCustomTheme and getMouseoverButtonsEnabled() then
+   MMDPS_UpdateAllWindowButtonsMouseover()
+  end
+ end)
+end
+
+local function MMDPS_GetSessionModeTextForWindow(w)
+ if not w then return nil end
+ local sessionType = nil
+ if w.GetSessionType then
+  sessionType = w:GetSessionType()
+ end
+ if sessionType == nil then
+  sessionType = w.sessionType
+ end
+
+ if sessionType ~= nil and Enum and Enum.DamageMeterSessionType then
+  if sessionType == Enum.DamageMeterSessionType.Overall then
+   return "Overall"
+  end
+  if sessionType == Enum.DamageMeterSessionType.Current then
+   return "Current"
+  end
+ end
+
+ local sessionDD = w.SessionDropdown
+ local sessionName = sessionDD and sessionDD.SessionName
+ local sessionText = sessionName and sessionName.GetText and sessionName:GetText() or nil
+ if type(sessionText) ~= "string" or sessionText == "" then return nil end
+ local normalized = sessionText:lower()
+ if normalized:find("overall", 1, true) then
+  return "Overall"
+ end
+ if normalized:find("current", 1, true) then
+  return "Current"
+ end
+ return nil
+end
+
+local function MMDPS_StripSessionSuffix(labelText)
+ if type(labelText) ~= "string" then return nil end
+ return (labelText:gsub("%s*%-%s*[Oo]verall%s*$", ""):gsub("%s*%-%s*[Cc]urrent%s*$", ""))
+end
+
+local function MMDPS_UpdateWindowTypeLabelWithSession(w)
+ if not w then return end
+ local dropdown = w.DamageMeterTypeDropdown
+ local typeName = dropdown and dropdown.TypeName
+ if not (typeName and typeName.GetText and typeName.SetText) then return end
+
+ local state = mmdps_state[w]
+ if not state then
+  state = {}
+  mmdps_state[w] = state
+ end
+
+ local currentText = typeName:GetText() or ""
+ local baseFromCurrent = MMDPS_StripSessionSuffix(currentText)
+ if baseFromCurrent and baseFromCurrent ~= "" then
+  state.baseTypeLabel = baseFromCurrent
+ end
+ local baseText = state.baseTypeLabel or baseFromCurrent or currentText or ""
+ if baseText == "" then return end
+
+ local finalText = baseText
+ if getShowSessionInTypeLabel() then
+  local modeText = MMDPS_GetSessionModeTextForWindow(w)
+  if modeText then
+   finalText = baseText .. " - " .. modeText
+  end
+ end
+
+ if typeName:GetText() ~= finalText then
+  typeName:SetText(finalText)
+ end
+ if dropdown and dropdown.Text and dropdown.Text.SetText and dropdown.Text.GetText then
+  if dropdown.Text:GetText() ~= finalText then
+   dropdown.Text:SetText(finalText)
+  end
+ end
+end
+
+local function MMDPS_UpdateAllWindowTypeLabels()
+ for i = 1, 40 do
+  local w = _G["DamageMeterSessionWindow"..i]
+  if w then
+   MMDPS_UpdateWindowTypeLabelWithSession(w)
+  end
+ end
+end
+
+local function MMDPS_StartTypeLabelTicker()
+ if mmdpsTypeLabelTicker then return end
+ if not (C_Timer and C_Timer.NewTicker) then return end
+ mmdpsTypeLabelTicker = C_Timer.NewTicker(0.35, function()
+  if MattMinimalDPSDB and MattMinimalDPSDB.useCustomTheme and getShowSessionInTypeLabel() then
+   MMDPS_UpdateAllWindowTypeLabels()
+  end
+ end)
+end
+
+local function MMDPS_InstallTypeLabelHooks()
+ if mmdpsTypeLabelHooksInstalled or not hooksecurefunc then return end
+ if not DamageMeterSessionWindowMixin then return end
+
+ if type(DamageMeterSessionWindowMixin.SetSession) == "function" then
+  hooksecurefunc(DamageMeterSessionWindowMixin, "SetSession", function(self)
+   MMDPS_UpdateWindowTypeLabelWithSession(self)
+  end)
+ end
+ if type(DamageMeterSessionWindowMixin.SetDamageMeterType) == "function" then
+  hooksecurefunc(DamageMeterSessionWindowMixin, "SetDamageMeterType", function(self)
+   local state = mmdps_state[self]
+   if state then
+    state.baseTypeLabel = nil
+   end
+   MMDPS_UpdateWindowTypeLabelWithSession(self)
+  end)
+ end
+
+ mmdpsTypeLabelHooksInstalled = true
+end
+
+local function MMDPS_ConfigureMeterButtonsMouseover(w)
+ if not w then return end
+ local state = mmdps_state[w]
+ if not state then
+  state = {}
+  mmdps_state[w] = state
+ end
+
+ state.buttonFrames = setmetatable({}, { __mode = "k" })
+ state.buttonFrames[w.SettingsDropdown] = true
+ state.buttonFrames[w.SessionDropdown] = true
+ state.buttonFrames[w.DamageMeterTypeDropdown] = true
+ state.buttonFrames[w.ResizeButton] = true
+
+ MMDPS_StartMouseoverTicker()
+ MMDPS_StartTypeLabelTicker()
+ MMDPS_UpdateWindowButtonsMouseover(w)
+end
+
+local function MMDPS_EnsureHeaderDivider(w)
+ if not w then return end
+ local state = mmdps_state[w]
+ if not state then
+  state = {}
+  mmdps_state[w] = state
+ end
+
+ if not state.headerDivider then
+  local divider = w:CreateTexture(nil, "OVERLAY", nil, 1)
+  local header = w.HeaderBar or w.TitleBar or w.headerBar or w.titleBar or w.Header
+  if header then
+   divider:SetPoint("TOPLEFT", header, "TOPLEFT", 10, -24)
+   divider:SetPoint("TOPRIGHT", header, "TOPRIGHT", -10, -24)
+  else
+   divider:SetPoint("TOPLEFT", w, "TOPLEFT", 10, -24)
+   divider:SetPoint("TOPRIGHT", w, "TOPRIGHT", -10, -24)
+  end
+  divider:SetHeight(HEADER_DIVIDER_THICKNESS)
+  state.headerDivider = divider
+ end
+
+ local r, g, bA, a = unpack(HEADER_DIVIDER_COLOR)
+ state.headerDivider:SetColorTexture(r, g, bA, a)
+ state.headerDivider:Show()
+end
+
+local function MMDPS_EnsureHeaderShade(w)
+ if not w then return end
+ local state = mmdps_state[w]
+ if not state then
+  state = {}
+  mmdps_state[w] = state
+ end
+
+ if not state.headerShade then
+  -- Above window background, below header text/icons.
+  -- Anchor to inner window bounds (not Blizzard header texture) to avoid bleed.
+  local shade = w:CreateTexture(nil, "BACKGROUND", nil, -7)
+  shade:SetPoint("TOPLEFT", w, "TOPLEFT", 10, -2)
+  shade:SetPoint("TOPRIGHT", w, "TOPRIGHT", -10, -2)
+  shade:SetHeight(24)
+  state.headerShade = shade
+ end
+
+ local r, g, bA = unpack(HEADER_SHADE_RGB)
+ state.headerShade:SetColorTexture(r, g, bA, getTitleOpacity())
+ state.headerShade:Show()
 end
 
 -- Apply matt font
@@ -562,9 +896,13 @@ end
 
 local function s(w)
  if not w or type(w.GetName)~="function" then return end
+ local inCombat = InCombatLockdown and InCombatLockdown()
  local hdr = w.HeaderBar or w.TitleBar or w.headerBar or w.titleBar or w.Header
  m(hdr)
  b(w)
+ MMDPS_EnsureHeaderShade(w)
+ MMDPS_EnsureHeaderDivider(w)
+ MMDPS_ConfigureMeterButtonsMouseover(w)
  local dropdown = w.DamageMeterTypeDropdown
  if dropdown and dropdown.Arrow then
   dropdown.Arrow:SetDesaturation(1)
@@ -574,18 +912,99 @@ local function s(w)
  if settings and settings.Icon then
   settings.Icon:SetDesaturation(1)
   settings.Icon:SetVertexColor(3, 3, 3, 1)
+  if settings.Icon.SetSize then settings.Icon:SetSize(HEADER_BUTTON_ICON_SIZE, HEADER_BUTTON_ICON_SIZE) end
  end
 
  local sb = w.ScrollBox or (w.GetScrollBox and w:GetScrollBox())
  MMDPS_HookScrollBoxFontRefresh(sb)
  local header = w.HeaderBar or w.Header
  local insetL, insetR = 10, 10
- if sb and header and not (InCombatLockdown and InCombatLockdown()) then
+ if sb and header and not inCombat then
   pcall(function() sb:ClearAllPoints(); sb:SetPoint("TOPLEFT", header, "BOTTOMLEFT", insetL, -5); sb:SetPoint("BOTTOMRIGHT", w, "BOTTOMRIGHT", -insetR, 6) end)
  end
 
  pcall(function()
+  local sessionDD = w.SessionDropdown
   local typeName = dropdown and dropdown.TypeName
+  local sessionTimer = w.SessionTimer
+
+  if not inCombat then
+   local anchorFrame = header or w
+   local headerButtonYOffset = 2
+   if settings then
+    settings:ClearAllPoints()
+    settings:SetPoint("RIGHT", anchorFrame, "RIGHT", HEADER_BUTTON_RIGHT_INSET, headerButtonYOffset)
+    if settings.SetSize then settings:SetSize(HEADER_BUTTON_SIZE, HEADER_BUTTON_SIZE) end
+   end
+
+   if dropdown then
+    dropdown:ClearAllPoints()
+    if dropdown.SetSize then dropdown:SetSize(HEADER_BUTTON_SIZE, HEADER_BUTTON_SIZE) end
+    if settings then
+     dropdown:SetPoint("RIGHT", settings, "LEFT", -HEADER_BUTTON_GAP, 0)
+    else
+     dropdown:SetPoint("RIGHT", anchorFrame, "RIGHT", HEADER_BUTTON_RIGHT_INSET - 28, headerButtonYOffset)
+    end
+   end
+
+   if sessionDD then
+    sessionDD:ClearAllPoints()
+    if sessionDD.SetSize then sessionDD:SetSize(HEADER_BUTTON_SIZE, HEADER_BUTTON_SIZE) end
+    if dropdown then
+     sessionDD:SetPoint("RIGHT", dropdown, "LEFT", -HEADER_BUTTON_GAP, 2)
+    elseif settings then
+     sessionDD:SetPoint("RIGHT", settings, "LEFT", -HEADER_BUTTON_GAP, 2)
+    end
+    if sessionDD.Arrow then
+     if sessionDD.Arrow.SetAlpha then sessionDD.Arrow:SetAlpha(0) end
+     if sessionDD.Arrow.SetDesaturation then sessionDD.Arrow:SetDesaturation(1) end
+    end
+    if sessionDD.ResetButton then
+     if sessionDD.ResetButton.SetAlpha then sessionDD.ResetButton:SetAlpha(0) end
+     if sessionDD.ResetButton.Hide then sessionDD.ResetButton:Hide() end
+    end
+    if sessionDD.Background then
+     -- WowStyle2 dropdown background extends beyond frame by default; clamp it
+     -- so this control matches the visual footprint of the other header buttons.
+     sessionDD.Background:ClearAllPoints()
+     sessionDD.Background:SetPoint("TOPLEFT", sessionDD, "TOPLEFT", 0, 0)
+     sessionDD.Background:SetPoint("BOTTOMRIGHT", sessionDD, "BOTTOMRIGHT", 0, 0)
+     if sessionDD.Background.SetAtlas then
+      sessionDD.Background:SetAtlas("common-dropdown-c-button", true)
+     end
+    end
+   end
+  end
+
+  if sessionTimer and not inCombat then
+   sessionTimer:ClearAllPoints()
+   if header then
+    sessionTimer:SetPoint("RIGHT", header, "RIGHT", -12, 2)
+   else
+    sessionTimer:SetPoint("RIGHT", w, "RIGHT", -12, 2)
+   end
+   if sessionTimer.SetJustifyH then sessionTimer:SetJustifyH("RIGHT") end
+   if sessionTimer.SetWidth then sessionTimer:SetWidth(72) end
+  end
+
+  if typeName and not inCombat then
+   if typeName.GetParent and typeName:GetParent() ~= w and typeName.SetParent then
+    typeName:SetParent(w)
+   end
+   typeName:ClearAllPoints()
+   if header then
+    typeName:SetPoint("LEFT", header, "LEFT", 22, 2)
+   else
+    typeName:SetPoint("LEFT", w, "LEFT", 22, 3)
+   end
+   if sessionTimer then
+    typeName:SetPoint("RIGHT", sessionTimer, "LEFT", -10, 0)
+   else
+    typeName:SetPoint("RIGHT", dropdown, "LEFT", -8, 0)
+   end
+   if typeName.SetJustifyH then typeName:SetJustifyH("LEFT") end
+  end
+
   if typeName and typeName.SetFont then
    MMDPS_RegisterManagedFontString(typeName, "typeLabel", FONT_FLAGS)
    MMDPS_SetRegionFont(typeName, GetItemFontSize("typeLabel"), FONT_FLAGS)
@@ -598,9 +1017,9 @@ local function s(w)
    dropdown.Text:SetTextColor(1, 1, 1, 1)
   end
 
-  local sessionDD = w.SessionDropdown
-  local sessionName = sessionDD and sessionDD.SessionName
+  MMDPS_UpdateWindowTypeLabelWithSession(w)
 
+  local sessionName = sessionDD and sessionDD.SessionName
   if sessionName then
    if sessionName.SetTextColor then sessionName:SetTextColor(1, 1, 1, 1) end
    if sessionName.SetFont then
@@ -609,7 +1028,6 @@ local function s(w)
    end
   end
 
-  local sessionTimer = w.SessionTimer
   if sessionTimer then
    if sessionTimer.SetTextColor then sessionTimer:SetTextColor(1, 1, 1, 1) end
    if sessionTimer.SetFont then
@@ -630,6 +1048,7 @@ end
 
 local MMDPS_ApplyNowOrDefer
 local mmdpsDamageMeterWindowHookInstalled = false
+
 local function MMDPS_InstallDamageMeterWindowHook()
  if mmdpsDamageMeterWindowHookInstalled then return end
  if not hooksecurefunc then return end
@@ -649,6 +1068,7 @@ end
 local function apply()
  MMDPS_InstallDamageMeterWindowHook()
  installEntryFontHook()
+ MMDPS_InstallTypeLabelHooks()
 
  local function ApplyToSessionWindows()
   for i = 1, 40 do
@@ -900,6 +1320,9 @@ MattMinimalDPSDB = type(MattMinimalDPSDB) == "table" and MattMinimalDPSDB or {}
 MattMinimalDPSDB.useCustomTheme = MattMinimalDPSDB.useCustomTheme ~= false
 MattMinimalDPSDB.backdropStyle = MattMinimalDPSDB.backdropStyle or "black"
 MattMinimalDPSDB.backdropOpacity = tonumber(MattMinimalDPSDB.backdropOpacity) or DEFAULT_BACKDROP_OPACITY
+MattMinimalDPSDB.titleOpacity = tonumber(MattMinimalDPSDB.titleOpacity) or DEFAULT_TITLE_OPACITY
+MattMinimalDPSDB.mouseoverButtons = MattMinimalDPSDB.mouseoverButtons ~= false
+MattMinimalDPSDB.showSessionInTypeLabel = MattMinimalDPSDB.showSessionInTypeLabel ~= false
 MattMinimalDPSDB.globalFont = NormalizeMediaName(MattMinimalDPSDB.globalFont) or MMDPS_FONT_DEFAULT
  MattMinimalDPSDB.globalFontPath = MMDPS_GetUsableFontPath(MattMinimalDPSDB.globalFontPath) or nil
  MattMinimalDPSDB.globalFontPathName = NormalizeMediaName(MattMinimalDPSDB.globalFontPathName)
@@ -943,6 +1366,12 @@ f:SetScript("OnEvent",function(_, ev, arg1)
 
  if ev == "PLAYER_REGEN_ENABLED" and pendingDeferredApply then
   pendingDeferredApply = false
+  if MattMinimalDPSDB and MattMinimalDPSDB.useCustomTheme then
+   apply()
+  end
+ end
+ if ev == "PLAYER_REGEN_ENABLED" and pendingMouseoverRefreshAfterCombat then
+  pendingMouseoverRefreshAfterCombat = false
   if MattMinimalDPSDB and MattMinimalDPSDB.useCustomTheme then
    apply()
   end
@@ -1051,7 +1480,7 @@ if LDB and LibDBIcon then
  C_Timer.After(0, ApplyMinimapIconVisibility)
  
  local settingsFrame = CreateFrame("Frame", "MattMinimalDPSSettingsFrame", UIParent, "BackdropTemplate")
- settingsFrame:SetSize(420, 500)
+ settingsFrame:SetSize(420, 360)
  settingsFrame:SetPoint("CENTER")
  settingsFrame:SetMovable(true)
  settingsFrame:EnableMouse(true)
@@ -1114,7 +1543,8 @@ if LDB and LibDBIcon then
  local panes = {
   general = CreateFrame("Frame", nil, settingsFrame),
   sessions = CreateFrame("Frame", nil, settingsFrame),
-  appearance = CreateFrame("Frame", nil, settingsFrame),
+  font = CreateFrame("Frame", nil, settingsFrame),
+  style = CreateFrame("Frame", nil, settingsFrame),
  }
  local HideFontPicker = nil
  for _, pane in pairs(panes) do
@@ -1123,6 +1553,9 @@ if LDB and LibDBIcon then
  end
 
  local function SetActiveTab(tabKey)
+  if tabKey == "appearance" then
+   tabKey = "font"
+  end
   if not panes[tabKey] then tabKey = "general" end
   if HideFontPicker then
    HideFontPicker()
@@ -1184,19 +1617,22 @@ if LDB and LibDBIcon then
 
  local tabInset = 14
  local tabSpacing = 4
- local tabUsableWidth = settingsFrame:GetWidth() - (tabInset * 2) - (tabSpacing * 2)
- local tabWidth = math.floor(tabUsableWidth / 3)
- local tabRemainder = tabUsableWidth - (tabWidth * 3)
+ local tabUsableWidth = settingsFrame:GetWidth() - (tabInset * 2) - (tabSpacing * 3)
+ local tabWidth = math.floor(tabUsableWidth / 4)
+ local tabRemainder = tabUsableWidth - (tabWidth * 4)
  local tab1Width = tabWidth + (tabRemainder > 0 and 1 or 0)
  local tab2Width = tabWidth + (tabRemainder > 1 and 1 or 0)
- local tab3Width = tabWidth
+ local tab3Width = tabWidth + (tabRemainder > 2 and 1 or 0)
+ local tab4Width = tabWidth
  local tab1X = tabInset
  local tab2X = tab1X + tab1Width + tabSpacing
  local tab3X = tab2X + tab2Width + tabSpacing
+ local tab4X = tab3X + tab3Width + tabSpacing
 
  CreateTabButton("general", "General", tab1X, tab1Width)
  CreateTabButton("sessions", "Sessions", tab2X, tab2Width)
- CreateTabButton("appearance", "Appearance", tab3X, tab3Width)
+ CreateTabButton("font", "Font", tab3X, tab3Width)
+ CreateTabButton("style", "Style", tab4X, tab4Width)
 
  local tabDivider = settingsFrame:CreateTexture(nil, "ARTWORK")
  tabDivider:SetPoint("TOPLEFT", tabInset, -136)
@@ -1204,13 +1640,13 @@ if LDB and LibDBIcon then
  tabDivider:SetHeight(1)
  tabDivider:SetColorTexture(0.18, 0.18, 0.18, 0.9)
 
- local fontLabel = panes.appearance:CreateFontString(nil, "OVERLAY")
+ local fontLabel = panes.font:CreateFontString(nil, "OVERLAY")
  fontLabel:SetPoint("TOPLEFT", 0, -8)
  fontLabel:SetFont(GUI_FONT_PATH, GUI_FONT_SIZE, GUI_FONT_FLAGS)
  fontLabel:SetText("Font:")
  fontLabel:SetTextColor(1, 1, 1, 1)
 
- local fontDropdown = CreateFrame("Frame", nil, panes.appearance, "UIDropDownMenuTemplate")
+ local fontDropdown = CreateFrame("Frame", nil, panes.font, "UIDropDownMenuTemplate")
  fontDropdown:SetPoint("TOPLEFT", fontLabel, "BOTTOMLEFT", -15, -2)
 
  local function GetFontDropdownText(fontName)
@@ -1488,7 +1924,7 @@ if LDB and LibDBIcon then
   end)
  end
 
- local fontScaleTitle = panes.appearance:CreateFontString(nil, "OVERLAY")
+ local fontScaleTitle = panes.font:CreateFontString(nil, "OVERLAY")
  fontScaleTitle:SetPoint("TOPLEFT", 0, -56)
  fontScaleTitle:SetFont(GUI_FONT_PATH, GUI_FONT_SIZE, GUI_FONT_FLAGS)
  fontScaleTitle:SetText("Font Scaling")
@@ -1505,18 +1941,18 @@ if LDB and LibDBIcon then
  }
 
  for idx, row in ipairs(fontSizeSliderRows) do
-  local label = panes.appearance:CreateFontString(nil, "OVERLAY")
+  local label = panes.font:CreateFontString(nil, "OVERLAY")
   label:SetPoint("TOPLEFT", 0, row.y)
   label:SetFont(GUI_FONT_PATH, 10, GUI_FONT_FLAGS)
   label:SetText(row.text)
   label:SetTextColor(0.85, 0.85, 0.85, 1)
 
-  local valueText = panes.appearance:CreateFontString(nil, "OVERLAY")
+  local valueText = panes.font:CreateFontString(nil, "OVERLAY")
   valueText:SetPoint("LEFT", label, "RIGHT", 8, 0)
   valueText:SetFont(GUI_FONT_PATH, 10, GUI_FONT_FLAGS)
   valueText:SetTextColor(0.8, 0.8, 0.8, 1)
 
-  local slider = CreateFrame("Slider", "MattMinimalDPSFontSizeSlider"..idx, panes.appearance, "OptionsSliderTemplate")
+  local slider = CreateFrame("Slider", "MattMinimalDPSFontSizeSlider"..idx, panes.font, "OptionsSliderTemplate")
   slider:SetPoint("TOPLEFT", 190, row.y + 2)
   slider:SetMinMaxValues(8, 20)
   slider:SetValueStep(1)
@@ -1568,27 +2004,27 @@ if LDB and LibDBIcon then
      return MattMinimalDPSDB.resetMode or "mythic"
  end
 
- local backdropLabel = panes.appearance:CreateFontString(nil, "OVERLAY")
- backdropLabel:SetPoint("TOPLEFT", 0, -218)
+ local backdropLabel = panes.style:CreateFontString(nil, "OVERLAY")
+ backdropLabel:SetPoint("TOPLEFT", 0, -8)
  backdropLabel:SetFont(GUI_FONT_PATH, GUI_FONT_SIZE, GUI_FONT_FLAGS)
  backdropLabel:SetText("Backdrop Style:")
  backdropLabel:SetTextColor(1, 1, 1, 1)
 
- local backdropDropdown = CreateFrame("Frame", nil, panes.appearance, "UIDropDownMenuTemplate")
+ local backdropDropdown = CreateFrame("Frame", nil, panes.style, "UIDropDownMenuTemplate")
  backdropDropdown:SetPoint("TOPLEFT", backdropLabel, "BOTTOMLEFT", -15, -2)
- local opacitySliderLabel = panes.appearance:CreateFontString(nil, "OVERLAY")
- opacitySliderLabel:SetPoint("TOPLEFT", 0, -266)
+ local opacitySliderLabel = panes.style:CreateFontString(nil, "OVERLAY")
+ opacitySliderLabel:SetPoint("TOPLEFT", backdropDropdown, "BOTTOMLEFT", 15, -6)
  opacitySliderLabel:SetFont(GUI_FONT_PATH, GUI_FONT_SIZE, GUI_FONT_FLAGS)
  opacitySliderLabel:SetText("Backdrop Opacity:")
  opacitySliderLabel:SetTextColor(1, 1, 1, 1)
 
- local opacityValueText = panes.appearance:CreateFontString(nil, "OVERLAY")
+ local opacityValueText = panes.style:CreateFontString(nil, "OVERLAY")
  opacityValueText:SetPoint("LEFT", opacitySliderLabel, "RIGHT", 8, 0)
  opacityValueText:SetFont(GUI_FONT_PATH, GUI_FONT_SIZE, GUI_FONT_FLAGS)
  opacityValueText:SetTextColor(0.8, 0.8, 0.8, 1)
 
- local opacitySlider = CreateFrame("Slider", "MattMinimalDPSBackdropOpacitySlider", panes.appearance, "OptionsSliderTemplate")
- opacitySlider:SetPoint("TOPLEFT", opacitySliderLabel, "BOTTOMLEFT", 0, -8)
+local opacitySlider = CreateFrame("Slider", "MattMinimalDPSBackdropOpacitySlider", panes.style, "OptionsSliderTemplate")
+opacitySlider:SetPoint("TOPLEFT", opacitySliderLabel, "BOTTOMLEFT", 0, -8)
  opacitySlider:SetMinMaxValues(0, 1)
  opacitySlider:SetValueStep(0.05)
  opacitySlider:SetObeyStepOnDrag(true)
@@ -1597,6 +2033,28 @@ if LDB and LibDBIcon then
  _G[opacitySlider:GetName().."Low"]:SetText("0%")
  _G[opacitySlider:GetName().."High"]:SetText("100%")
  _G[opacitySlider:GetName().."Text"]:SetText("")
+
+local titleOpacitySliderLabel = panes.style:CreateFontString(nil, "OVERLAY")
+titleOpacitySliderLabel:SetPoint("TOPLEFT", opacitySlider, "BOTTOMLEFT", 0, -14)
+titleOpacitySliderLabel:SetFont(GUI_FONT_PATH, GUI_FONT_SIZE, GUI_FONT_FLAGS)
+titleOpacitySliderLabel:SetText("Title Opacity:")
+titleOpacitySliderLabel:SetTextColor(1, 1, 1, 1)
+
+ local titleOpacityValueText = panes.style:CreateFontString(nil, "OVERLAY")
+ titleOpacityValueText:SetPoint("LEFT", titleOpacitySliderLabel, "RIGHT", 8, 0)
+ titleOpacityValueText:SetFont(GUI_FONT_PATH, GUI_FONT_SIZE, GUI_FONT_FLAGS)
+ titleOpacityValueText:SetTextColor(0.8, 0.8, 0.8, 1)
+
+local titleOpacitySlider = CreateFrame("Slider", "MattMinimalDPSTitleOpacitySlider", panes.style, "OptionsSliderTemplate")
+titleOpacitySlider:SetPoint("TOPLEFT", titleOpacitySliderLabel, "BOTTOMLEFT", 0, -6)
+ titleOpacitySlider:SetMinMaxValues(0, 1)
+ titleOpacitySlider:SetValueStep(0.05)
+ titleOpacitySlider:SetObeyStepOnDrag(true)
+ titleOpacitySlider:SetWidth(180)
+ titleOpacitySlider:SetHeight(16)
+ _G[titleOpacitySlider:GetName().."Low"]:SetText("0%")
+ _G[titleOpacitySlider:GetName().."High"]:SetText("100%")
+ _G[titleOpacitySlider:GetName().."Text"]:SetText("")
 
  local backdropUIUpdating = false
  local function RefreshBackdropOpacityUI()
@@ -1612,6 +2070,15 @@ if LDB and LibDBIcon then
    opacityValueText:SetText(string.format("%d%%", math.floor(opacity * 100 + 0.5)))
   end
   backdropUIUpdating = false
+ end
+
+ local titleOpacityUIUpdating = false
+ local function RefreshTitleOpacityUI()
+  titleOpacityUIUpdating = true
+  local opacity = getTitleOpacity()
+  titleOpacitySlider:SetValue(opacity)
+  titleOpacityValueText:SetText(string.format("%d%%", math.floor(opacity * 100 + 0.5)))
+  titleOpacityUIUpdating = false
  end
 
  local function SetBackdropStyle(style)
@@ -1684,6 +2151,33 @@ opacitySlider:SetScript("OnValueChanged", function(self, value)
 end)
 RefreshBackdropOpacityUI()
 
+titleOpacitySlider:SetScript("OnValueChanged", function(self, value)
+ if titleOpacityUIUpdating then return end
+ MattMinimalDPSDB = MattMinimalDPSDB or {}
+ local clamped = math.max(0, math.min(1, value or DEFAULT_TITLE_OPACITY))
+ MattMinimalDPSDB.titleOpacity = clamped
+ RefreshTitleOpacityUI()
+ if MattMinimalDPSDB.useCustomTheme then
+  apply()
+ end
+end)
+RefreshTitleOpacityUI()
+
+local mouseoverButtonsCheckbox = CreateFrame("CheckButton", nil, panes.style, "UICheckButtonTemplate")
+mouseoverButtonsCheckbox:SetPoint("TOPLEFT", titleOpacitySlider, "BOTTOMLEFT", 0, -18)
+mouseoverButtonsCheckbox:SetSize(24, 24)
+mouseoverButtonsCheckbox.text = mouseoverButtonsCheckbox:CreateFontString(nil, "OVERLAY")
+mouseoverButtonsCheckbox.text:SetPoint("LEFT", mouseoverButtonsCheckbox, "RIGHT", 5, 0)
+mouseoverButtonsCheckbox.text:SetFont(GUI_FONT_PATH, GUI_FONT_SIZE, GUI_FONT_FLAGS)
+mouseoverButtonsCheckbox.text:SetText("Mouseover Buttons")
+mouseoverButtonsCheckbox.text:SetTextColor(1, 1, 1, 1)
+mouseoverButtonsCheckbox:SetChecked(getMouseoverButtonsEnabled())
+mouseoverButtonsCheckbox:SetScript("OnClick", function(self)
+ MattMinimalDPSDB = MattMinimalDPSDB or {}
+ MattMinimalDPSDB.mouseoverButtons = self:GetChecked()
+ MMDPS_UpdateAllWindowButtonsMouseover()
+end)
+
 UIDropDownMenu_Initialize(resetModeDropdown, function(self, level, menuList)
     local selected = GetResetMode()
     for _, mode in ipairs(resetModes) do
@@ -1733,6 +2227,21 @@ resetNowBtn:SetScript("OnEnter", function(self)
 end)
 resetNowBtn:SetScript("OnLeave", function()
     GameTooltip:Hide()
+end)
+
+local typeLabelSessionCheckbox = CreateFrame("CheckButton", nil, panes.sessions, "UICheckButtonTemplate")
+typeLabelSessionCheckbox:SetPoint("TOPLEFT", resetModeDropdown, "BOTTOMLEFT", 15, -12)
+typeLabelSessionCheckbox:SetSize(24, 24)
+typeLabelSessionCheckbox.text = typeLabelSessionCheckbox:CreateFontString(nil, "OVERLAY")
+typeLabelSessionCheckbox.text:SetPoint("LEFT", typeLabelSessionCheckbox, "RIGHT", 5, 0)
+typeLabelSessionCheckbox.text:SetFont(GUI_FONT_PATH, GUI_FONT_SIZE, GUI_FONT_FLAGS)
+typeLabelSessionCheckbox.text:SetText("Show Current/Overall Next to DPS")
+typeLabelSessionCheckbox.text:SetTextColor(1, 1, 1, 1)
+typeLabelSessionCheckbox:SetChecked(getShowSessionInTypeLabel())
+typeLabelSessionCheckbox:SetScript("OnClick", function(self)
+ MattMinimalDPSDB = MattMinimalDPSDB or {}
+ MattMinimalDPSDB.showSessionInTypeLabel = self:GetChecked()
+ MMDPS_UpdateAllWindowTypeLabels()
 end)
   
  local minimapCheckbox = CreateFrame("CheckButton", nil, panes.general, "UICheckButtonTemplate")
@@ -1801,6 +2310,7 @@ settingsFrame:SetScript("OnShow", function()
     if selectedText then
         UIDropDownMenu_SetText(resetModeDropdown, selectedText)
     end
+     typeLabelSessionCheckbox:SetChecked(getShowSessionInTypeLabel())
 	    local selectedStyle = getBackdropStyle()
 	    UIDropDownMenu_SetSelectedValue(backdropDropdown, selectedStyle)
 	    UIDropDownMenu_SetText(backdropDropdown, GetBackdropStyleText(selectedStyle))
@@ -1809,6 +2319,12 @@ settingsFrame:SetScript("OnShow", function()
 	    SetFontDropdownDisplay(selectedFont)
 	    RefreshFontSizeUI()
 	    RefreshBackdropOpacityUI()
+	    RefreshTitleOpacityUI()
+     mouseoverButtonsCheckbox:SetChecked(getMouseoverButtonsEnabled())
+     if MattMinimalDPSDB and MattMinimalDPSDB.useCustomTheme then
+      MMDPS_UpdateAllWindowButtonsMouseover()
+      MMDPS_UpdateAllWindowTypeLabels()
+     end
 	    SetActiveTab((MattMinimalDPSDB and MattMinimalDPSDB.activeTab) or "general")
 end)
 settingsFrame:HookScript("OnHide", function()
