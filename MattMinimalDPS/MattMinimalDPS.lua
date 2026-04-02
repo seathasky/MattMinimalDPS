@@ -1326,6 +1326,12 @@ MattMinimalDPSDB.showSessionInTypeLabel = MattMinimalDPSDB.showSessionInTypeLabe
 MattMinimalDPSDB.globalFont = NormalizeMediaName(MattMinimalDPSDB.globalFont) or MMDPS_FONT_DEFAULT
  MattMinimalDPSDB.globalFontPath = MMDPS_GetUsableFontPath(MattMinimalDPSDB.globalFontPath) or nil
  MattMinimalDPSDB.globalFontPathName = NormalizeMediaName(MattMinimalDPSDB.globalFontPathName)
+ if type(MattMinimalDPSDB.minimapIcon) ~= "table" then
+  MattMinimalDPSDB.minimapIcon = {}
+ end
+ if MattMinimalDPSDB.minimapIcon.hide == nil then
+  MattMinimalDPSDB.minimapIcon.hide = false
+ end
  if MattMinimalDPSDB.fontSize and not MattMinimalDPSDB.fontSizes then
   MattMinimalDPSDB.fontSizes = {}
   for _, key in ipairs(FONT_SIZE_KEYS) do
@@ -1460,24 +1466,49 @@ if LDB and LibDBIcon then
    tooltip:AddLine("|cffffd200Right-click:|r Toggle Damage Meter")
   end,
  })
- 
- MattMinimalDPSDB = MattMinimalDPSDB or {}
- if not MattMinimalDPSDB.minimapIcon then MattMinimalDPSDB.minimapIcon = {} end
- 
- LibDBIcon:Register("MattMinimalDPS", minimapLDB, MattMinimalDPSDB.minimapIcon)
+ local minimapIconRegistered = false
+
+ local function EnsureMinimapIconSettings()
+  MattMinimalDPSDB = type(MattMinimalDPSDB) == "table" and MattMinimalDPSDB or {}
+  if type(MattMinimalDPSDB.minimapIcon) ~= "table" then
+   MattMinimalDPSDB.minimapIcon = {}
+  end
+  if MattMinimalDPSDB.minimapIcon.hide == nil then
+   MattMinimalDPSDB.minimapIcon.hide = false
+  end
+  return MattMinimalDPSDB.minimapIcon
+ end
+
+ local function RegisterMinimapIconIfNeeded()
+  if minimapIconRegistered then return end
+  local minimapDB = EnsureMinimapIconSettings()
+  if LibDBIcon.IsRegistered and LibDBIcon:IsRegistered("MattMinimalDPS") then
+   LibDBIcon:Refresh("MattMinimalDPS", minimapDB)
+  else
+   LibDBIcon:Register("MattMinimalDPS", minimapLDB, minimapDB)
+  end
+  minimapIconRegistered = true
+ end
 
  local function ApplyMinimapIconVisibility()
-  MattMinimalDPSDB = MattMinimalDPSDB or {}
-  MattMinimalDPSDB.minimapIcon = MattMinimalDPSDB.minimapIcon or {}
-  if MattMinimalDPSDB.minimapIcon.hide then
+  local minimapDB = EnsureMinimapIconSettings()
+  RegisterMinimapIconIfNeeded()
+  if minimapDB.hide then
    LibDBIcon:Hide("MattMinimalDPS")
   else
    LibDBIcon:Show("MattMinimalDPS")
   end
  end
 
- ApplyMinimapIconVisibility()
- C_Timer.After(0, ApplyMinimapIconVisibility)
+ local minimapInitFrame = CreateFrame("Frame")
+ minimapInitFrame:RegisterEvent("PLAYER_LOGIN")
+ minimapInitFrame:SetScript("OnEvent", function(self, event)
+  if event ~= "PLAYER_LOGIN" then return end
+  ApplyMinimapIconVisibility()
+  C_Timer.After(0, ApplyMinimapIconVisibility)
+  self:UnregisterEvent("PLAYER_LOGIN")
+  self:SetScript("OnEvent", nil)
+ end)
  
  local settingsFrame = CreateFrame("Frame", "MattMinimalDPSSettingsFrame", UIParent, "BackdropTemplate")
  settingsFrame:SetSize(420, 360)
@@ -2254,12 +2285,11 @@ end)
  minimapCheckbox.text:SetTextColor(1, 1, 1, 1)
  
  minimapCheckbox:SetScript("OnClick", function(self)
-  MattMinimalDPSDB = MattMinimalDPSDB or {}
-  MattMinimalDPSDB.minimapIcon = MattMinimalDPSDB.minimapIcon or {}
+  local minimapDB = EnsureMinimapIconSettings()
   if self:GetChecked() then
-   MattMinimalDPSDB.minimapIcon.hide = false
+   minimapDB.hide = false
   else
-   MattMinimalDPSDB.minimapIcon.hide = true
+   minimapDB.hide = true
   end
   ApplyMinimapIconVisibility()
  end)
@@ -2295,11 +2325,8 @@ end)
 	SetActiveTab((MattMinimalDPSDB and MattMinimalDPSDB.activeTab) or "general")
 
 settingsFrame:SetScript("OnShow", function()
-    if MattMinimalDPSDB and MattMinimalDPSDB.minimapIcon then
-        minimapCheckbox:SetChecked(not MattMinimalDPSDB.minimapIcon.hide)
-    else
-        minimapCheckbox:SetChecked(true)
-    end
+    local minimapDB = EnsureMinimapIconSettings()
+    minimapCheckbox:SetChecked(not minimapDB.hide)
     themeCheckbox:SetChecked(MattMinimalDPSDB.useCustomTheme)
     local selected = GetResetMode()
     local selectedText = nil
