@@ -408,19 +408,32 @@ end
 
 local function m(h) if not h then return end if h.IsForbidden and h:IsForbidden() then return end if h.Hide then h:Hide() end if h.SetAlpha then h:SetAlpha(0) end end
 
+local function MMDPS_HideFrameVisualRegions(frame)
+ if not frame or type(frame.GetRegions) ~= "function" then return end
+ if frame.IsForbidden and frame:IsForbidden() then return end
+ for _, region in ipairs({frame:GetRegions()}) do
+  if region and region.GetObjectType and region:GetObjectType() == "Texture" then
+   if region.Hide then
+    region:Hide()
+   end
+   if region.SetAlpha then
+    region:SetAlpha(0)
+   end
+  end
+ end
+end
+
 local function b(w)
  if not w then return end
  local r, g, bA, a = getBackdropColor()
- if w.Background and w.Background.SetColorTexture then
-  w.Background:SetColorTexture(r, g, bA, a)
-  return
- end
+ m(w.Background)
 
  local state = mmdps_state[w]
  if not state then state = {} mmdps_state[w] = state end
  if not state.bg then
   local t = w:CreateTexture(nil,"BACKGROUND",nil,-8)
-  t:SetAllPoints(w)
+  t:SetPoint("TOPLEFT", w, "TOPLEFT", 10, -2)
+  t:SetPoint("BOTTOMRIGHT", w, "BOTTOMRIGHT", -10, 8)
   state.bg = t
  end
  if state.bg.SetColorTexture then state.bg:SetColorTexture(r, g, bA, a) end
@@ -669,10 +682,21 @@ local function MMDPS_ConfigureMeterButtonsMouseover(w)
  end
 
  state.buttonFrames = setmetatable({}, { __mode = "k" })
- state.buttonFrames[w.SettingsDropdown] = true
- state.buttonFrames[w.SessionDropdown] = true
- state.buttonFrames[w.DamageMeterTypeDropdown] = true
- state.buttonFrames[w.ResizeButton] = true
+ local buttonCandidates = {
+  w.SettingsDropdown,
+  w.SessionDropdown,
+  w.DamageMeterTypeDropdown,
+  w.ResizeButton,
+  w.MinimizeButton,
+  w.MaximizeButton,
+  w.CloseButton,
+  w.ResizeGrip,
+ }
+ for _, frame in ipairs(buttonCandidates) do
+  if frame then
+   state.buttonFrames[frame] = true
+  end
+ end
 
  MMDPS_StartMouseoverTicker()
  MMDPS_StartTypeLabelTicker()
@@ -832,6 +856,7 @@ end
 
 local entryHookInstalled = false
 local mmdpsHookedScrollBoxes = setmetatable({}, { __mode = "k" })
+local MMDPS_StyleSessionScrollBar
 
 local function MMDPS_ApplyFontsToScrollBox(scrollBox)
  if not scrollBox then return end
@@ -858,11 +883,89 @@ local function MMDPS_HookScrollBoxFontRefresh(scrollBox)
   hooksecurefunc(scrollBox, "Update", function(self)
    if MattMinimalDPSDB and MattMinimalDPSDB.useCustomTheme then
     MMDPS_ApplyFontsToScrollBox(self)
+
+    -- Track the owning session window so Blizzard's later ScrollBox updates
+    -- cannot restore the 12.0.5 reserved scrollbar lane after our skin pass.
+    local w = self._mmdpsOwnerWindow
+    local header = w and (w.HeaderBar or w.Header)
+    if w and header then
+     pcall(function()
+      self:ClearAllPoints()
+      self:SetPoint("TOPLEFT", header, "BOTTOMLEFT", 10, -5)
+      self:SetPoint("BOTTOMRIGHT", w, "BOTTOMRIGHT", -5, 6)
+     end)
+     local scrollBar = (w.MinimizeContainer and w.MinimizeContainer.ScrollBar) or w.ScrollBar or self.ScrollBar
+     MMDPS_StyleSessionScrollBar(scrollBar)
+    end
    end
   end)
+  end
+
+  mmdpsHookedScrollBoxes[scrollBox] = true
+end
+
+MMDPS_StyleSessionScrollBar = function(scrollBar)
+ if not scrollBar then return end
+
+ -- Blizzard 12.0.5 moved the session scrollbar under MinimizeContainer and
+ -- added multiple art layers. Hide the visuals without touching row layout.
+  MMDPS_HideFrameVisualRegions(scrollBar)
+
+ local track = scrollBar.Track
+ if track then
+  MMDPS_HideFrameVisualRegions(track)
+  m(track)
+  if track.Thumb then
+   MMDPS_HideFrameVisualRegions(track.Thumb)
+   m(track.Thumb)
+   if track.Thumb.Middle then
+    m(track.Thumb.Middle)
+   end
+  end
  end
 
- mmdpsHookedScrollBoxes[scrollBox] = true
+ local back = scrollBar.Back
+ if back then
+  MMDPS_HideFrameVisualRegions(back)
+  m(back)
+  if back.Texture then
+   m(back.Texture)
+  end
+ end
+
+ if scrollBar.DecrementButton then
+  m(scrollBar.DecrementButton)
+ end
+ if scrollBar.IncrementButton then
+  m(scrollBar.IncrementButton)
+ end
+ if scrollBar.Backward then
+  m(scrollBar.Backward)
+ end
+ if scrollBar.Forward then
+  m(scrollBar.Forward)
+ end
+
+ if scrollBar.SetWidth then
+  scrollBar:SetWidth(1)
+ end
+ if scrollBar.EnableMouse then
+  scrollBar:EnableMouse(false)
+ end
+ if scrollBar.SetAlpha then
+  scrollBar:SetAlpha(0)
+ end
+ if scrollBar.Hide then
+  scrollBar:Hide()
+ end
+ if scrollBar.HookScript and not scrollBar._mmdpsHideHooked then
+  scrollBar:HookScript("OnShow", function(self)
+   if self.Hide then
+    self:Hide()
+   end
+  end)
+  scrollBar._mmdpsHideHooked = true
+ end
 end
 
 local function installEntryFontHook()
@@ -900,6 +1003,11 @@ local function s(w)
  local hdr = w.HeaderBar or w.TitleBar or w.headerBar or w.titleBar or w.Header
  m(hdr)
  b(w)
+ m(w.MinimizeButton)
+ MMDPS_HideFrameVisualRegions(w.MinimizeContainer)
+ if w.MinimizeContainer and w.MinimizeContainer.Background then
+  m(w.MinimizeContainer.Background)
+ end
  MMDPS_EnsureHeaderShade(w)
  MMDPS_EnsureHeaderDivider(w)
  MMDPS_ConfigureMeterButtonsMouseover(w)
@@ -916,11 +1024,41 @@ local function s(w)
  end
 
  local sb = w.ScrollBox or (w.GetScrollBox and w:GetScrollBox())
+ if sb then
+  -- The ScrollBox update hook needs to know which session window to restore
+  -- anchors against after Blizzard reapplies managed scrollbar layout.
+  sb._mmdpsOwnerWindow = w
+ end
  MMDPS_HookScrollBoxFontRefresh(sb)
  local header = w.HeaderBar or w.Header
- local insetL, insetR = 10, 10
- if sb and header and not inCombat then
-  pcall(function() sb:ClearAllPoints(); sb:SetPoint("TOPLEFT", header, "BOTTOMLEFT", insetL, -5); sb:SetPoint("BOTTOMRIGHT", w, "BOTTOMRIGHT", -insetR, 6) end)
+ local scrollBar = (w.MinimizeContainer and w.MinimizeContainer.ScrollBar) or (sb and sb.ScrollBar)
+ local resizeOwner = w.MinimizeContainer or w
+ local resizeButton = w.ResizeButton or (w.MinimizeContainer and w.MinimizeContainer.ResizeButton)
+
+ MMDPS_StyleSessionScrollBar(scrollBar)
+ if w.SetResizeBounds then
+  w:SetResizeBounds(320, 140)
+ elseif w.SetMinResize then
+  w:SetMinResize(320, 140)
+ end
+ if resizeOwner and resizeOwner ~= w then
+  if resizeOwner.SetResizeBounds then
+   resizeOwner:SetResizeBounds(320, 140)
+  elseif resizeOwner.SetMinResize then
+   resizeOwner:SetMinResize(320, 140)
+  end
+ end
+ if resizeButton then
+  resizeButton.minWidth = 320
+  resizeButton.minHeight = 140
+ end
+ local insetL, insetR = 10, 5
+ if sb and header then
+  pcall(function()
+   sb:ClearAllPoints()
+   sb:SetPoint("TOPLEFT", header, "BOTTOMLEFT", insetL, -5)
+   sb:SetPoint("BOTTOMRIGHT", w, "BOTTOMRIGHT", -insetR, 6)
+  end)
  end
 
  pcall(function()
@@ -1040,7 +1178,12 @@ local function s(w)
   local sourceWindow = w.SourceWindow
   if sourceWindow then
    local sourceSB = sourceWindow.ScrollBox or (sourceWindow.GetScrollBox and sourceWindow:GetScrollBox())
+   if sourceSB then
+    sourceSB._mmdpsOwnerWindow = sourceWindow
+   end
    MMDPS_HookScrollBoxFontRefresh(sourceSB)
+   local sourceScrollBar = (sourceWindow.MinimizeContainer and sourceWindow.MinimizeContainer.ScrollBar) or (sourceSB and sourceSB.ScrollBar)
+   MMDPS_StyleSessionScrollBar(sourceScrollBar)
    MMDPS_ApplyFontsToScrollBox(sourceSB)
   end
   end)
