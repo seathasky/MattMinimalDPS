@@ -997,10 +997,206 @@ local function installEntryFontHook()
  entryHookInstalled = hookedAny
 end
 
+function MMDPS_AllowUnrestrictedWindowMovement(frame)
+ if not frame then return end
+ if frame.SetMovable then
+  frame:SetMovable(true)
+ end
+ if frame.SetClampedToScreen then
+  frame:SetClampedToScreen(false)
+ end
+ if frame.SetClampRectInsets then
+  frame:SetClampRectInsets(-10000, -10000, -10000, -10000)
+ end
+end
+
+function MMDPS_SavePrimaryWrapperPosition()
+ local wrapper = _G.MattMinimalDPSPrimaryDamageMeterFrame
+ if not wrapper or not wrapper.GetCenter then return end
+ if not UIParent then return end
+ local centerX, centerY = wrapper:GetCenter()
+ local parentCenterX, parentCenterY = UIParent:GetCenter()
+ if not (centerX and centerY and parentCenterX and parentCenterY) then return end
+
+ MattMinimalDPSDB = MattMinimalDPSDB or {}
+ MattMinimalDPSDB.primaryWindow = MattMinimalDPSDB.primaryWindow or {}
+ MattMinimalDPSDB.primaryWindow.x = centerX - parentCenterX
+ MattMinimalDPSDB.primaryWindow.y = centerY - parentCenterY
+ MattMinimalDPSDB.primaryWindow.w = wrapper:GetWidth()
+ MattMinimalDPSDB.primaryWindow.h = wrapper:GetHeight()
+end
+
+function MMDPS_GetPrimaryWrapper()
+ if _G.MattMinimalDPSPrimaryDamageMeterFrame then
+  return _G.MattMinimalDPSPrimaryDamageMeterFrame
+ end
+ if not UIParent then return nil end
+
+ local wrapper = CreateFrame("Frame", "MattMinimalDPSPrimaryDamageMeterFrame", UIParent)
+ wrapper:SetMovable(true)
+ wrapper:SetResizable(true)
+ wrapper:SetClampedToScreen(false)
+ if wrapper.SetClampRectInsets then
+  wrapper:SetClampRectInsets(-10000, -10000, -10000, -10000)
+ end
+ if wrapper.SetResizeBounds then
+  wrapper:SetResizeBounds(320, 140)
+ elseif wrapper.SetMinResize then
+  wrapper:SetMinResize(320, 140)
+ end
+ wrapper:EnableMouse(false)
+ wrapper:SetFrameStrata("LOW")
+
+ local drag = CreateFrame("Frame", "MattMinimalDPSPrimaryDamageMeterDragHandle", UIParent)
+ drag:SetPoint("TOPLEFT", wrapper, "TOPLEFT", 0, 0)
+ drag:SetPoint("TOPRIGHT", wrapper, "TOPRIGHT", -110, 0)
+ drag:SetHeight(28)
+ drag:SetFrameStrata("DIALOG")
+ drag:EnableMouse(true)
+ drag:RegisterForDrag("LeftButton")
+ drag:SetScript("OnDragStart", function()
+  if InCombatLockdown and InCombatLockdown() then return end
+  wrapper:StartMoving()
+ end)
+ drag:SetScript("OnDragStop", function()
+  wrapper:StopMovingOrSizing()
+  MMDPS_SavePrimaryWrapperPosition()
+ end)
+ wrapper.dragHandle = drag
+ wrapper:HookScript("OnShow", function()
+  drag:Show()
+ end)
+ wrapper:HookScript("OnHide", function()
+  drag:Hide()
+ end)
+
+ wrapper:SetScript("OnSizeChanged", function()
+  if wrapper._mmdpsSizingReady then
+   MMDPS_SavePrimaryWrapperPosition()
+  end
+ end)
+
+ _G.MattMinimalDPSPrimaryDamageMeterFrame = wrapper
+ return wrapper
+end
+
+function MMDPS_PositionPrimaryWrapper(wrapper, sourceWindow)
+ if not wrapper then return end
+ MattMinimalDPSDB = MattMinimalDPSDB or {}
+ MattMinimalDPSDB.primaryWindow = MattMinimalDPSDB.primaryWindow or {}
+ local saved = MattMinimalDPSDB.primaryWindow
+
+ local width = tonumber(saved.w) or (sourceWindow and sourceWindow.GetWidth and sourceWindow:GetWidth()) or 400
+ local height = tonumber(saved.h) or (sourceWindow and sourceWindow.GetHeight and sourceWindow:GetHeight()) or 200
+ if width < 320 then width = 320 end
+ if height < 140 then height = 140 end
+ wrapper:SetSize(width, height)
+
+ wrapper:ClearAllPoints()
+ if saved.x and saved.y then
+  wrapper:SetPoint("CENTER", UIParent, "CENTER", saved.x, saved.y)
+ elseif sourceWindow and sourceWindow.GetCenter then
+  local centerX, centerY = sourceWindow:GetCenter()
+  local parentCenterX, parentCenterY = UIParent:GetCenter()
+  if centerX and centerY and parentCenterX and parentCenterY then
+   wrapper:SetPoint("CENTER", UIParent, "CENTER", centerX - parentCenterX, centerY - parentCenterY)
+  else
+   wrapper:SetPoint("CENTER", UIParent, "CENTER", 0, 0)
+  end
+ else
+  wrapper:SetPoint("CENTER", UIParent, "CENTER", 0, 0)
+ end
+
+ wrapper._mmdpsSizingReady = true
+end
+
+function MMDPS_HostPrimaryWindow(w)
+ if not w or not w.GetName or w:GetName() ~= "DamageMeterSessionWindow1" then return false end
+ if InCombatLockdown and InCombatLockdown() then return true end
+ local wrapper = MMDPS_GetPrimaryWrapper()
+ if not wrapper then return true end
+ if not wrapper._mmdpsPositioned then
+  MMDPS_PositionPrimaryWrapper(wrapper, w)
+  wrapper._mmdpsPositioned = true
+ end
+
+ wrapper:Show()
+ w:ClearAllPoints()
+ w:SetPoint("TOPLEFT", wrapper, "TOPLEFT", 0, 0)
+ w:SetPoint("BOTTOMRIGHT", wrapper, "BOTTOMRIGHT", 0, 0)
+ if w.SetClampedToScreen then
+  w:SetClampedToScreen(false)
+ end
+ if w.SetClampRectInsets then
+  w:SetClampRectInsets(-10000, -10000, -10000, -10000)
+ end
+ return true
+end
+
+function MMDPS_ShowSettingsFrame(tabKey)
+ local settings = _G.MattMinimalDPSSettingsFrame
+ if not settings then return false end
+
+ if tabKey then
+  MattMinimalDPSDB = MattMinimalDPSDB or {}
+  MattMinimalDPSDB.activeTab = tabKey
+ end
+
+ settings:Show()
+ settings:Raise()
+ return true
+end
+
+function MMDPS_IsDamageMeterEditModeFrame(frame)
+ if not frame then return false end
+ if frame == _G.DamageMeter then return true end
+ if frame.GetName and frame:GetName() == "DamageMeter" then return true end
+ if frame.systemNameString == "Damage Meter" then return true end
+ if _G.Enum and Enum.EditModeSystem and frame.system == Enum.EditModeSystem.DamageMeter then return true end
+ return false
+end
+
+function MMDPS_OpenSettingsFromDamageMeterEditMode(frame)
+ if not MMDPS_IsDamageMeterEditModeFrame(frame) then return end
+ if InCombatLockdown and InCombatLockdown() then return end
+
+ if not MMDPS_ShowSettingsFrame("general") and C_Timer then
+  C_Timer.After(0, function()
+   MMDPS_ShowSettingsFrame("general")
+  end)
+ end
+end
+
+function MMDPS_InstallEditModeSettingsHook()
+ local manager = _G.EditModeManagerFrame
+ if manager and manager._mmdpsSettingsHooked then return end
+ if not manager or type(manager.SelectSystem) ~= "function" then
+  if C_Timer and (not f._mmdpsEditModeHookRetries or f._mmdpsEditModeHookRetries < 10) then
+   f._mmdpsEditModeHookRetries = (f._mmdpsEditModeHookRetries or 0) + 1
+   C_Timer.After(1, MMDPS_InstallEditModeSettingsHook)
+  end
+  return
+ end
+
+ hooksecurefunc(manager, "SelectSystem", function(_, selectFrame)
+  MMDPS_OpenSettingsFromDamageMeterEditMode(selectFrame)
+ end)
+
+ manager._mmdpsSettingsHooked = true
+end
+
 local function s(w)
  if not w or type(w.GetName)~="function" then return end
  local inCombat = InCombatLockdown and InCombatLockdown()
  local hdr = w.HeaderBar or w.TitleBar or w.headerBar or w.titleBar or w.Header
+ local isPrimaryWindow = w:GetName() == "DamageMeterSessionWindow1"
+ if isPrimaryWindow then
+  MMDPS_HostPrimaryWindow(w)
+ else
+  MMDPS_AllowUnrestrictedWindowMovement(w)
+  MMDPS_AllowUnrestrictedWindowMovement(w.MinimizeContainer)
+  MMDPS_AllowUnrestrictedWindowMovement(w.SourceWindow)
+ end
  m(hdr)
  b(w)
  m(w.MinimizeButton)
@@ -1512,6 +1708,7 @@ f:SetScript("OnEvent",function(_, ev, arg1)
  if not mmdpsInitialized then
   MMDPS_InitializeSettings()
  end
+ MMDPS_InstallEditModeSettingsHook()
 
  if ev == "PLAYER_REGEN_ENABLED" and pendingDeferredApply then
   pendingDeferredApply = false
