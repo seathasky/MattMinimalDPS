@@ -22,6 +22,7 @@ local FONT_SIZE_DEFAULTS = {
  sessionName = 12,
  sessionTimer = 12,
 }
+local CLASS_ICON_SIZE_DEFAULT = 24
 
 local function NormalizeMediaName(value)
  if type(value) ~= "string" then return nil end
@@ -43,6 +44,21 @@ local function ClampFontSize(value)
  if n > 20 then n = 20 end
  return n
 end
+
+local function ClampClassIconSize(value)
+ local n = math.floor(tonumber(value) or CLASS_ICON_SIZE_DEFAULT)
+ if n < 8 then n = 8 end
+ if n > 24 then n = 24 end
+ return n
+end
+
+local function GetClassIconSize()
+ if MattMinimalDPSDB and MattMinimalDPSDB.classIconSize then
+  return ClampClassIconSize(MattMinimalDPSDB.classIconSize)
+ end
+ return CLASS_ICON_SIZE_DEFAULT
+end
+
 
 local function GetItemFontSize(key)
  if MattMinimalDPSDB and MattMinimalDPSDB.fontSizes and MattMinimalDPSDB.fontSizes[key] then
@@ -850,6 +866,19 @@ local function applyEntryFont(entry)
         MMDPS_ApplyEntryFontString(valueFS, "entryValue")
 
         applyFallbackEntryFontStrings(entry, statusBar, nameFS, valueFS)
+
+        local iconSize = GetClassIconSize()
+        local candidates = {
+         entry.Icon and entry.Icon.Icon, entry.Icon,
+         entry.ClassIcon, entry.classIcon, entry.icon, entry.PlayerIcon,
+         statusBar and statusBar.ClassIcon, statusBar and statusBar.classIcon,
+         statusBar and statusBar.Icon, statusBar and statusBar.icon, statusBar and statusBar.PlayerIcon,
+        }
+        for _, tex in ipairs(candidates) do
+         if tex and tex.SetSize then
+          tex:SetSize(iconSize, iconSize)
+         end
+        end
     end)
 end
 
@@ -978,9 +1007,16 @@ local function installEntryFontHook()
   "SetTextScale",
   "Update",
   "Refresh",
-  "SetData",
-  "SetEntryData",
-  "OnDataChanged",
+ "SetData",
+ "SetEntryData",
+ "OnDataChanged",
+  "UpdateIcon",
+  "UpdateStyle",
+  "SetupSharedStyleIconVisibility",
+  "SetupDefaultStyle",
+  "SetupBorderedStyle",
+  "SetupFullBackgroundStyle",
+  "SetupThinStyle",
  }
 
  for _, method in ipairs(methodCandidates) do
@@ -1134,6 +1170,11 @@ function MMDPS_HostPrimaryWindow(w)
 end
 
 function MMDPS_ShowSettingsFrame(tabKey)
+ if InCombatLockdown and InCombatLockdown() then
+  print("|cff66ccffMMDPS|r Settings cannot be edited while in combat.")
+  return false
+ end
+
  local settings = _G.MattMinimalDPSSettingsFrame
  if not settings then return false end
 
@@ -1158,7 +1199,10 @@ end
 
 function MMDPS_OpenSettingsFromDamageMeterEditMode(frame)
  if not MMDPS_IsDamageMeterEditModeFrame(frame) then return end
- if InCombatLockdown and InCombatLockdown() then return end
+ if InCombatLockdown and InCombatLockdown() then
+  MMDPS_ShowSettingsFrame("general")
+  return
+ end
 
  if not MMDPS_ShowSettingsFrame("general") and C_Timer then
   C_Timer.After(0, function()
@@ -1386,6 +1430,53 @@ local function s(w)
 end
 
 local MMDPS_ApplyNowOrDefer
+
+local function MMDPS_CreateClassIconSizeSlider(parent, anchorFrame)
+ local label = parent:CreateFontString(nil, "OVERLAY")
+ label:SetPoint("TOPLEFT", anchorFrame, "BOTTOMLEFT", 0, -14)
+ label:SetFont(GUI_FONT_PATH, GUI_FONT_SIZE, GUI_FONT_FLAGS)
+ label:SetText("Class Icon Size:")
+ label:SetTextColor(1, 1, 1, 1)
+
+ local valueText = parent:CreateFontString(nil, "OVERLAY")
+ valueText:SetPoint("LEFT", label, "RIGHT", 8, 0)
+ valueText:SetFont(GUI_FONT_PATH, GUI_FONT_SIZE, GUI_FONT_FLAGS)
+ valueText:SetTextColor(0.8, 0.8, 0.8, 1)
+
+ local slider = CreateFrame("Slider", "MattMinimalDPSClassIconSizeSlider", parent, "OptionsSliderTemplate")
+ slider:SetPoint("TOPLEFT", label, "BOTTOMLEFT", 0, -6)
+ slider:SetMinMaxValues(8, 24)
+ slider:SetValueStep(1)
+ slider:SetObeyStepOnDrag(true)
+ slider:SetWidth(180)
+ slider:SetHeight(16)
+ _G[slider:GetName().."Low"]:SetText("8")
+ _G[slider:GetName().."High"]:SetText("24")
+ _G[slider:GetName().."Text"]:SetText("")
+
+ local uiUpdating = false
+ local function Refresh()
+  uiUpdating = true
+  local iconSize = GetClassIconSize()
+  slider:SetValue(iconSize)
+  valueText:SetText(tostring(iconSize))
+  uiUpdating = false
+ end
+ slider.RefreshValue = Refresh
+
+ slider:SetScript("OnValueChanged", function(self, value)
+  if uiUpdating then return end
+  MattMinimalDPSDB = MattMinimalDPSDB or {}
+  MattMinimalDPSDB.classIconSize = ClampClassIconSize(value)
+  Refresh()
+  if MattMinimalDPSDB.useCustomTheme and type(MMDPS_ApplyNowOrDefer) == "function" then
+   MMDPS_ApplyNowOrDefer()
+  end
+ end)
+
+ Refresh()
+ return slider
+end
 local mmdpsDamageMeterWindowHookInstalled = false
 
 local function MMDPS_InstallDamageMeterWindowHook()
@@ -1662,6 +1753,7 @@ MattMinimalDPSDB.backdropOpacity = tonumber(MattMinimalDPSDB.backdropOpacity) or
 MattMinimalDPSDB.titleOpacity = tonumber(MattMinimalDPSDB.titleOpacity) or DEFAULT_TITLE_OPACITY
 MattMinimalDPSDB.mouseoverButtons = MattMinimalDPSDB.mouseoverButtons ~= false
 MattMinimalDPSDB.showSessionInTypeLabel = MattMinimalDPSDB.showSessionInTypeLabel ~= false
+MattMinimalDPSDB.classIconSize = ClampClassIconSize(MattMinimalDPSDB.classIconSize)
 MattMinimalDPSDB.globalFont = NormalizeMediaName(MattMinimalDPSDB.globalFont) or MMDPS_FONT_DEFAULT
  MattMinimalDPSDB.globalFontPath = MMDPS_GetUsableFontPath(MattMinimalDPSDB.globalFontPath) or nil
  MattMinimalDPSDB.globalFontPathName = NormalizeMediaName(MattMinimalDPSDB.globalFontPathName)
@@ -1698,6 +1790,7 @@ end
 f:RegisterEvent("ADDON_LOADED")
 f:RegisterEvent("PLAYER_LOGIN")
 f:RegisterEvent("PLAYER_REGEN_ENABLED")
+f:RegisterEvent("PLAYER_REGEN_DISABLED")
 f:SetScript("OnEvent",function(_, ev, arg1)
  if ev == "ADDON_LOADED" then
   if arg1 ~= ADDON_NAME then return end
@@ -1709,6 +1802,14 @@ f:SetScript("OnEvent",function(_, ev, arg1)
   MMDPS_InitializeSettings()
  end
  MMDPS_InstallEditModeSettingsHook()
+
+ if ev == "PLAYER_REGEN_DISABLED" then
+  if MattMinimalDPSSettingsFrame and MattMinimalDPSSettingsFrame:IsShown() then
+   MattMinimalDPSSettingsFrame:Hide()
+   print("|cff66ccffMMDPS|r Settings closed while in combat.")
+  end
+  return
+ end
 
  if ev == "PLAYER_REGEN_ENABLED" and pendingDeferredApply then
   pendingDeferredApply = false
@@ -1763,9 +1864,8 @@ SlashCmdList["MATTMINIMALDPS"]=function(msg)
   MMDPS_DebugDumpEntryFonts()
   return
  end
- apply()
- if MattMinimalDPSSettingsFrame then
-  MattMinimalDPSSettingsFrame:Show()
+ if MMDPS_ShowSettingsFrame() then
+  apply()
  end
 end
 
@@ -1784,7 +1884,7 @@ if LDB and LibDBIcon then
      if MattMinimalDPSSettingsFrame:IsShown() then
       MattMinimalDPSSettingsFrame:Hide()
      else
-      MattMinimalDPSSettingsFrame:Show()
+      MMDPS_ShowSettingsFrame()
      end
     end
    elseif button == "RightButton" then
@@ -1851,7 +1951,7 @@ if LDB and LibDBIcon then
  end)
  
  local settingsFrame = CreateFrame("Frame", "MattMinimalDPSSettingsFrame", UIParent, "BackdropTemplate")
- settingsFrame:SetSize(420, 360)
+ settingsFrame:SetSize(420, 390)
  settingsFrame:SetPoint("CENTER")
  settingsFrame:SetMovable(true)
  settingsFrame:EnableMouse(true)
@@ -2405,19 +2505,19 @@ opacitySlider:SetPoint("TOPLEFT", opacitySliderLabel, "BOTTOMLEFT", 0, -8)
  _G[opacitySlider:GetName().."High"]:SetText("100%")
  _G[opacitySlider:GetName().."Text"]:SetText("")
 
-local titleOpacitySliderLabel = panes.style:CreateFontString(nil, "OVERLAY")
-titleOpacitySliderLabel:SetPoint("TOPLEFT", opacitySlider, "BOTTOMLEFT", 0, -14)
-titleOpacitySliderLabel:SetFont(GUI_FONT_PATH, GUI_FONT_SIZE, GUI_FONT_FLAGS)
-titleOpacitySliderLabel:SetText("Title Opacity:")
-titleOpacitySliderLabel:SetTextColor(1, 1, 1, 1)
+ local titleOpacitySliderLabel = panes.style:CreateFontString(nil, "OVERLAY")
+ titleOpacitySliderLabel:SetPoint("TOPLEFT", opacitySlider, "BOTTOMLEFT", 0, -14)
+ titleOpacitySliderLabel:SetFont(GUI_FONT_PATH, GUI_FONT_SIZE, GUI_FONT_FLAGS)
+ titleOpacitySliderLabel:SetText("Title Opacity:")
+ titleOpacitySliderLabel:SetTextColor(1, 1, 1, 1)
 
  local titleOpacityValueText = panes.style:CreateFontString(nil, "OVERLAY")
  titleOpacityValueText:SetPoint("LEFT", titleOpacitySliderLabel, "RIGHT", 8, 0)
  titleOpacityValueText:SetFont(GUI_FONT_PATH, GUI_FONT_SIZE, GUI_FONT_FLAGS)
  titleOpacityValueText:SetTextColor(0.8, 0.8, 0.8, 1)
 
-local titleOpacitySlider = CreateFrame("Slider", "MattMinimalDPSTitleOpacitySlider", panes.style, "OptionsSliderTemplate")
-titleOpacitySlider:SetPoint("TOPLEFT", titleOpacitySliderLabel, "BOTTOMLEFT", 0, -6)
+ local titleOpacitySlider = CreateFrame("Slider", "MattMinimalDPSTitleOpacitySlider", panes.style, "OptionsSliderTemplate")
+ titleOpacitySlider:SetPoint("TOPLEFT", titleOpacitySliderLabel, "BOTTOMLEFT", 0, -6)
  titleOpacitySlider:SetMinMaxValues(0, 1)
  titleOpacitySlider:SetValueStep(0.05)
  titleOpacitySlider:SetObeyStepOnDrag(true)
@@ -2427,9 +2527,11 @@ titleOpacitySlider:SetPoint("TOPLEFT", titleOpacitySliderLabel, "BOTTOMLEFT", 0,
  _G[titleOpacitySlider:GetName().."High"]:SetText("100%")
  _G[titleOpacitySlider:GetName().."Text"]:SetText("")
 
- local backdropUIUpdating = false
+ panes.style.classIconSizeSlider = MMDPS_CreateClassIconSizeSlider(panes.style, titleOpacitySlider)
+
+ panes.style.backdropUIUpdating = false
  local function RefreshBackdropOpacityUI()
-  backdropUIUpdating = true
+  panes.style.backdropUIUpdating = true
   local style = getBackdropStyle()
   local opacity = getBackdropOpacity()
   opacitySlider:SetValue(opacity)
@@ -2440,16 +2542,16 @@ titleOpacitySlider:SetPoint("TOPLEFT", titleOpacitySliderLabel, "BOTTOMLEFT", 0,
    opacitySlider:Enable()
    opacityValueText:SetText(string.format("%d%%", math.floor(opacity * 100 + 0.5)))
   end
-  backdropUIUpdating = false
+  panes.style.backdropUIUpdating = false
  end
 
- local titleOpacityUIUpdating = false
+ panes.style.titleOpacityUIUpdating = false
  local function RefreshTitleOpacityUI()
-  titleOpacityUIUpdating = true
+  panes.style.titleOpacityUIUpdating = true
   local opacity = getTitleOpacity()
   titleOpacitySlider:SetValue(opacity)
   titleOpacityValueText:SetText(string.format("%d%%", math.floor(opacity * 100 + 0.5)))
-  titleOpacityUIUpdating = false
+  panes.style.titleOpacityUIUpdating = false
  end
 
  local function SetBackdropStyle(style)
@@ -2511,7 +2613,7 @@ end
 RefreshFontSizeUI()
 
 opacitySlider:SetScript("OnValueChanged", function(self, value)
- if backdropUIUpdating then return end
+ if panes.style.backdropUIUpdating then return end
  MattMinimalDPSDB = MattMinimalDPSDB or {}
  local clamped = math.max(0, math.min(1, value or 1))
  MattMinimalDPSDB.backdropOpacity = clamped
@@ -2523,7 +2625,7 @@ end)
 RefreshBackdropOpacityUI()
 
 titleOpacitySlider:SetScript("OnValueChanged", function(self, value)
- if titleOpacityUIUpdating then return end
+ if panes.style.titleOpacityUIUpdating then return end
  MattMinimalDPSDB = MattMinimalDPSDB or {}
  local clamped = math.max(0, math.min(1, value or DEFAULT_TITLE_OPACITY))
  MattMinimalDPSDB.titleOpacity = clamped
@@ -2534,16 +2636,16 @@ titleOpacitySlider:SetScript("OnValueChanged", function(self, value)
 end)
 RefreshTitleOpacityUI()
 
-local mouseoverButtonsCheckbox = CreateFrame("CheckButton", nil, panes.style, "UICheckButtonTemplate")
-mouseoverButtonsCheckbox:SetPoint("TOPLEFT", titleOpacitySlider, "BOTTOMLEFT", 0, -18)
-mouseoverButtonsCheckbox:SetSize(24, 24)
-mouseoverButtonsCheckbox.text = mouseoverButtonsCheckbox:CreateFontString(nil, "OVERLAY")
-mouseoverButtonsCheckbox.text:SetPoint("LEFT", mouseoverButtonsCheckbox, "RIGHT", 5, 0)
-mouseoverButtonsCheckbox.text:SetFont(GUI_FONT_PATH, GUI_FONT_SIZE, GUI_FONT_FLAGS)
-mouseoverButtonsCheckbox.text:SetText("Mouseover Buttons")
-mouseoverButtonsCheckbox.text:SetTextColor(1, 1, 1, 1)
-mouseoverButtonsCheckbox:SetChecked(getMouseoverButtonsEnabled())
-mouseoverButtonsCheckbox:SetScript("OnClick", function(self)
+panes.style.mouseoverButtonsCheckbox = CreateFrame("CheckButton", nil, panes.style, "UICheckButtonTemplate")
+panes.style.mouseoverButtonsCheckbox:SetPoint("TOPLEFT", panes.style.classIconSizeSlider, "BOTTOMLEFT", 0, -18)
+panes.style.mouseoverButtonsCheckbox:SetSize(24, 24)
+panes.style.mouseoverButtonsCheckbox.text = panes.style.mouseoverButtonsCheckbox:CreateFontString(nil, "OVERLAY")
+panes.style.mouseoverButtonsCheckbox.text:SetPoint("LEFT", panes.style.mouseoverButtonsCheckbox, "RIGHT", 5, 0)
+panes.style.mouseoverButtonsCheckbox.text:SetFont(GUI_FONT_PATH, GUI_FONT_SIZE, GUI_FONT_FLAGS)
+panes.style.mouseoverButtonsCheckbox.text:SetText("Mouseover Buttons")
+panes.style.mouseoverButtonsCheckbox.text:SetTextColor(1, 1, 1, 1)
+panes.style.mouseoverButtonsCheckbox:SetChecked(getMouseoverButtonsEnabled())
+panes.style.mouseoverButtonsCheckbox:SetScript("OnClick", function(self)
  MattMinimalDPSDB = MattMinimalDPSDB or {}
  MattMinimalDPSDB.mouseoverButtons = self:GetChecked()
  MMDPS_UpdateAllWindowButtonsMouseover()
@@ -2686,8 +2788,11 @@ settingsFrame:SetScript("OnShow", function()
 	    SetFontDropdownDisplay(selectedFont)
 	    RefreshFontSizeUI()
 	    RefreshBackdropOpacityUI()
-	    RefreshTitleOpacityUI()
-     mouseoverButtonsCheckbox:SetChecked(getMouseoverButtonsEnabled())
+     RefreshTitleOpacityUI()
+     if panes.style.classIconSizeSlider and panes.style.classIconSizeSlider.RefreshValue then
+      panes.style.classIconSizeSlider.RefreshValue()
+     end
+     panes.style.mouseoverButtonsCheckbox:SetChecked(getMouseoverButtonsEnabled())
      if MattMinimalDPSDB and MattMinimalDPSDB.useCustomTheme then
       MMDPS_UpdateAllWindowButtonsMouseover()
       MMDPS_UpdateAllWindowTypeLabels()
