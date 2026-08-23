@@ -25,6 +25,7 @@ local MMDPS_UpdateAllWindowButtonsMouseover = MMDPS.UpdateAllWindowButtonsMouseo
 local MMDPS_UpdateAllWindowTypeLabels = MMDPS.UpdateAllWindowTypeLabels
 local MMDPS_CreateClassIconSizeSlider = MMDPS.CreateClassIconSizeSlider
 local MMDPS_ShowSettingsFrame = MMDPS.ShowSettingsFrame
+local MMDPS_ResetPrimaryWindowPosition = MMDPS.ResetPrimaryWindowPosition
 local EnsureMinimapIconSettings = MMDPS.EnsureMinimapIconSettings
 local ApplyMinimapIconVisibility = MMDPS.ApplyMinimapIconVisibility
 local apply = MMDPS.Apply
@@ -192,13 +193,14 @@ settingsFrame = CreateFrame("Frame", "MattMinimalDPSSettingsFrame", UIParent, "B
 
  local tabButtons = {}
  local panes = {
-  general = MMDPS_CreateScrollPane("General", 220),
+ general = MMDPS_CreateScrollPane("General", 220),
  sessions = MMDPS_CreateScrollPane("Sessions", 270),
-  font = MMDPS_CreateScrollPane("Font", 340),
-  style = MMDPS_CreateScrollPane("Style", 310),
+ font = MMDPS_CreateScrollPane("Font", 340),
+ style = MMDPS_CreateScrollPane("Style", 310),
+ system = MMDPS_CreateScrollPane("System", 180),
  }
  local HideFontPicker = nil
- local tabOrder = { "general", "sessions", "font", "style" }
+ local tabOrder = { "general", "sessions", "font", "style", "system" }
 
  local function ClampSettingsSize(width, height)
   width = tonumber(width) or SETTINGS_SIZE.defaultWidth
@@ -228,9 +230,10 @@ settingsFrame = CreateFrame("Frame", "MattMinimalDPSSettingsFrame", UIParent, "B
  local function UpdateTabLayout()
   local tabInset = 14
   local tabSpacing = 4
-  local tabUsableWidth = settingsFrame:GetWidth() - (tabInset * 2) - (tabSpacing * 3)
-  local tabWidth = math.floor(tabUsableWidth / 4)
-  local tabRemainder = tabUsableWidth - (tabWidth * 4)
+  local tabCount = #tabOrder
+  local tabUsableWidth = settingsFrame:GetWidth() - (tabInset * 2) - (tabSpacing * (tabCount - 1))
+  local tabWidth = math.floor(tabUsableWidth / tabCount)
+  local tabRemainder = tabUsableWidth - (tabWidth * tabCount)
   local x = tabInset
   for idx, key in ipairs(tabOrder) do
    local btn = tabButtons[key]
@@ -330,22 +333,17 @@ settingsFrame = CreateFrame("Frame", "MattMinimalDPSSettingsFrame", UIParent, "B
 
  local tabInset = 14
  local tabSpacing = 4
- local tabUsableWidth = settingsFrame:GetWidth() - (tabInset * 2) - (tabSpacing * 3)
- local tabWidth = math.floor(tabUsableWidth / 4)
- local tabRemainder = tabUsableWidth - (tabWidth * 4)
- local tab1Width = tabWidth + (tabRemainder > 0 and 1 or 0)
- local tab2Width = tabWidth + (tabRemainder > 1 and 1 or 0)
- local tab3Width = tabWidth + (tabRemainder > 2 and 1 or 0)
- local tab4Width = tabWidth
- local tab1X = tabInset
- local tab2X = tab1X + tab1Width + tabSpacing
- local tab3X = tab2X + tab2Width + tabSpacing
- local tab4X = tab3X + tab3Width + tabSpacing
-
- CreateTabButton("general", "General", tab1X, tab1Width)
- CreateTabButton("sessions", "Sessions", tab2X, tab2Width)
- CreateTabButton("font", "Font", tab3X, tab3Width)
- CreateTabButton("style", "Style", tab4X, tab4Width)
+ local tabCount = #tabOrder
+ local tabUsableWidth = settingsFrame:GetWidth() - (tabInset * 2) - (tabSpacing * (tabCount - 1))
+ local tabWidth = math.floor(tabUsableWidth / tabCount)
+ local tabRemainder = tabUsableWidth - (tabWidth * tabCount)
+ local tabX = tabInset
+ for idx, key in ipairs(tabOrder) do
+  local width = tabWidth + (tabRemainder >= idx and 1 or 0)
+  local label = key == "system" and "System" or key:gsub("^%l", string.upper)
+  CreateTabButton(key, label, tabX, width)
+  tabX = tabX + width + tabSpacing
+ end
  UpdateSettingsLayout()
 
  local tabDivider = settingsFrame:CreateTexture(nil, "ARTWORK")
@@ -973,6 +971,31 @@ typeLabelSessionCheckbox:SetScript("OnClick", function(self)
  MattMinimalDPSDB = MattMinimalDPSDB or {}
  MattMinimalDPSDB.showSessionInTypeLabel = self:GetChecked()
  MMDPS_UpdateAllWindowTypeLabels()
+end)
+
+local systemLabel = panes.system:CreateFontString(nil, "OVERLAY")
+systemLabel:SetPoint("TOPLEFT", 0, -8)
+systemLabel:SetFont(GUI_FONT_PATH, GUI_FONT_SIZE, GUI_FONT_FLAGS)
+systemLabel:SetText("Window Position:")
+systemLabel:SetTextColor(1, 1, 1, 1)
+
+local resetWindowBtn = CreateFrame("Button", nil, panes.system, "UIPanelButtonTemplate")
+resetWindowBtn:SetSize(170, 20)
+resetWindowBtn:SetPoint("TOPLEFT", systemLabel, "BOTTOMLEFT", -15, -8)
+resetWindowBtn:SetText("Center Main Window")
+MMDPS_StyleMinimalButton(resetWindowBtn)
+resetWindowBtn:SetScript("OnClick", function()
+    if MMDPS_ResetPrimaryWindowPosition then
+        MMDPS_ResetPrimaryWindowPosition()
+    end
+end)
+resetWindowBtn:SetScript("OnEnter", function(self)
+    GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+    GameTooltip:SetText("Move the main DPS window back to the middle of the screen")
+    GameTooltip:Show()
+end)
+resetWindowBtn:SetScript("OnLeave", function()
+    GameTooltip:Hide()
 end)
   
  local minimapCheckbox = CreateFrame("CheckButton", nil, panes.general, "UICheckButtonTemplate")

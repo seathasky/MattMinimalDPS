@@ -53,8 +53,7 @@ local function b(w)
  if not state then state = {} mmdps_state[w] = state end
  if not state.bg then
   local t = w:CreateTexture(nil,"BACKGROUND",nil,-8)
-  t:SetPoint("TOPLEFT", w, "TOPLEFT", 10, -2)
-  t:SetPoint("BOTTOMRIGHT", w, "BOTTOMRIGHT", -10, 8)
+  t:SetAllPoints(w)
   state.bg = t
  end
  if state.bg.SetColorTexture then state.bg:SetColorTexture(r, g, bA, a) end
@@ -336,11 +335,11 @@ local function MMDPS_EnsureHeaderDivider(w)
   local divider = w:CreateTexture(nil, "OVERLAY", nil, 1)
   local header = w.HeaderBar or w.TitleBar or w.headerBar or w.titleBar or w.Header
   if header then
-   divider:SetPoint("TOPLEFT", header, "TOPLEFT", 10, -24)
-   divider:SetPoint("TOPRIGHT", header, "TOPRIGHT", -10, -24)
+   divider:SetPoint("TOPLEFT", header, "TOPLEFT", 0, -24)
+   divider:SetPoint("TOPRIGHT", header, "TOPRIGHT", 0, -24)
   else
-   divider:SetPoint("TOPLEFT", w, "TOPLEFT", 10, -24)
-   divider:SetPoint("TOPRIGHT", w, "TOPRIGHT", -10, -24)
+   divider:SetPoint("TOPLEFT", w, "TOPLEFT", 0, -24)
+   divider:SetPoint("TOPRIGHT", w, "TOPRIGHT", 0, -24)
   end
   divider:SetHeight(HEADER_DIVIDER_THICKNESS)
   state.headerDivider = divider
@@ -361,10 +360,10 @@ local function MMDPS_EnsureHeaderShade(w)
 
  if not state.headerShade then
   -- Above window background, below header text/icons.
-  -- Anchor to inner window bounds (not Blizzard header texture) to avoid bleed.
+  -- Fill the window width so a screen-clamped meter visually touches the edge.
   local shade = w:CreateTexture(nil, "BACKGROUND", nil, -7)
-  shade:SetPoint("TOPLEFT", w, "TOPLEFT", 10, -2)
-  shade:SetPoint("TOPRIGHT", w, "TOPRIGHT", -10, -2)
+  shade:SetPoint("TOPLEFT", w, "TOPLEFT", 0, 0)
+  shade:SetPoint("TOPRIGHT", w, "TOPRIGHT", 0, 0)
   shade:SetHeight(24)
   state.headerShade = shade
  end
@@ -525,8 +524,8 @@ local function MMDPS_HookScrollBoxFontRefresh(scrollBox)
     if w and header then
      pcall(function()
       self:ClearAllPoints()
-      self:SetPoint("TOPLEFT", header, "BOTTOMLEFT", 10, -5)
-      self:SetPoint("BOTTOMRIGHT", w, "BOTTOMRIGHT", -5, 6)
+      self:SetPoint("TOPLEFT", header, "BOTTOMLEFT", 0, -5)
+      self:SetPoint("BOTTOMRIGHT", w, "BOTTOMRIGHT", 0, 0)
      end)
      local scrollBar = (w.MinimizeContainer and w.MinimizeContainer.ScrollBar) or w.ScrollBar or self.ScrollBar
      MMDPS_StyleSessionScrollBar(scrollBar)
@@ -638,17 +637,70 @@ local function installEntryFontHook()
  entryHookInstalled = hookedAny
 end
 
-function MMDPS_AllowUnrestrictedWindowMovement(frame)
+function MMDPS_ConstrainWindowMovement(frame)
  if not frame then return end
  if frame.SetMovable then
-  frame:SetMovable(true)
+   frame:SetMovable(true)
  end
  if frame.SetClampedToScreen then
-  frame:SetClampedToScreen(false)
+  frame:SetClampedToScreen(true)
  end
  if frame.SetClampRectInsets then
-  frame:SetClampRectInsets(-10000, -10000, -10000, -10000)
+  frame:SetClampRectInsets(0, 0, 0, 0)
  end
+end
+
+local function MMDPS_GetPrimaryWindowSizeLimits()
+ local maxWidth = UIParent and UIParent.GetWidth and UIParent:GetWidth() or nil
+ local maxHeight = UIParent and UIParent.GetHeight and UIParent:GetHeight() or nil
+ if not maxWidth or maxWidth <= 0 then maxWidth = 320 end
+ if not maxHeight or maxHeight <= 0 then maxHeight = 140 end
+ return math.min(320, maxWidth), math.min(140, maxHeight), maxWidth, maxHeight
+end
+
+local function MMDPS_SetWindowResizeBounds(frame)
+ if not frame then return end
+ local minWidth, minHeight, maxWidth, maxHeight = MMDPS_GetPrimaryWindowSizeLimits()
+ if frame.SetResizeBounds then
+  frame:SetResizeBounds(minWidth, minHeight, maxWidth, maxHeight)
+ elseif frame.SetMinResize then
+  frame:SetMinResize(minWidth, minHeight)
+ end
+end
+
+function MMDPS_ConstrainPrimaryWrapperToScreen(savePosition)
+ if InCombatLockdown and InCombatLockdown() then
+  MMDPS.pendingWindowConstraint = true
+  return false
+ end
+ local wrapper = _G.MattMinimalDPSPrimaryDamageMeterFrame
+ if not wrapper or not UIParent then return false end
+
+ MMDPS_ConstrainWindowMovement(wrapper)
+ MMDPS_SetWindowResizeBounds(wrapper)
+
+ local minWidth, minHeight, maxWidth, maxHeight = MMDPS_GetPrimaryWindowSizeLimits()
+ local width = math.max(minWidth, math.min(tonumber(wrapper:GetWidth()) or minWidth, maxWidth))
+ local height = math.max(minHeight, math.min(tonumber(wrapper:GetHeight()) or minHeight, maxHeight))
+ if width ~= wrapper:GetWidth() or height ~= wrapper:GetHeight() then
+  wrapper:SetSize(width, height)
+ end
+
+ local centerX, centerY = wrapper:GetCenter()
+ local parentCenterX, parentCenterY = UIParent:GetCenter()
+ if not (centerX and centerY and parentCenterX and parentCenterY) then return false end
+
+ local maxX = math.max(0, (maxWidth - width) / 2)
+ local maxY = math.max(0, (maxHeight - height) / 2)
+ local x = math.max(-maxX, math.min(centerX - parentCenterX, maxX))
+ local y = math.max(-maxY, math.min(centerY - parentCenterY, maxY))
+ wrapper:ClearAllPoints()
+ wrapper:SetPoint("CENTER", UIParent, "CENTER", x, y)
+
+ if savePosition then
+  MMDPS_SavePrimaryWrapperPosition()
+ end
+ return true
 end
 
 function MMDPS_SavePrimaryWrapperPosition()
@@ -667,6 +719,41 @@ function MMDPS_SavePrimaryWrapperPosition()
  MattMinimalDPSDB.primaryWindow.h = wrapper:GetHeight()
 end
 
+function MMDPS_ResetPrimaryWrapperPosition()
+ if InCombatLockdown and InCombatLockdown() then return false end
+ local wrapper = MMDPS_GetPrimaryWrapper()
+ if not wrapper or not UIParent then return false end
+ local sourceWindow = _G.DamageMeterSessionWindow1
+ local width = (sourceWindow and sourceWindow.GetWidth and sourceWindow:GetWidth()) or wrapper:GetWidth()
+ local height = (sourceWindow and sourceWindow.GetHeight and sourceWindow:GetHeight()) or wrapper:GetHeight()
+ if not width or width <= 0 then width = 400 end
+ if not height or height <= 0 then height = 200 end
+
+ MattMinimalDPSDB = MattMinimalDPSDB or {}
+ MattMinimalDPSDB.primaryWindow = MattMinimalDPSDB.primaryWindow or {}
+ local saved = MattMinimalDPSDB.primaryWindow
+ saved.x = 0
+ saved.y = 0
+ saved.w = width
+ saved.h = height
+
+ wrapper:SetSize(width, height)
+ wrapper:ClearAllPoints()
+ wrapper:SetPoint("CENTER", UIParent, "CENTER", 0, 0)
+ wrapper._mmdpsPositioned = true
+ wrapper._mmdpsSizingReady = true
+
+ if sourceWindow and sourceWindow.ClearAllPoints then
+  sourceWindow:ClearAllPoints()
+  sourceWindow:SetPoint("TOPLEFT", wrapper, "TOPLEFT", 0, 0)
+  sourceWindow:SetPoint("BOTTOMRIGHT", wrapper, "BOTTOMRIGHT", 0, 0)
+ end
+
+ MMDPS_ConstrainPrimaryWrapperToScreen(true)
+
+ return true
+end
+
 function MMDPS_GetPrimaryWrapper()
  if _G.MattMinimalDPSPrimaryDamageMeterFrame then
   return _G.MattMinimalDPSPrimaryDamageMeterFrame
@@ -674,17 +761,9 @@ function MMDPS_GetPrimaryWrapper()
  if not UIParent then return nil end
 
  local wrapper = CreateFrame("Frame", "MattMinimalDPSPrimaryDamageMeterFrame", UIParent)
- wrapper:SetMovable(true)
  wrapper:SetResizable(true)
- wrapper:SetClampedToScreen(false)
- if wrapper.SetClampRectInsets then
-  wrapper:SetClampRectInsets(-10000, -10000, -10000, -10000)
- end
- if wrapper.SetResizeBounds then
-  wrapper:SetResizeBounds(320, 140)
- elseif wrapper.SetMinResize then
-  wrapper:SetMinResize(320, 140)
- end
+ MMDPS_ConstrainWindowMovement(wrapper)
+ MMDPS_SetWindowResizeBounds(wrapper)
  wrapper:EnableMouse(false)
  wrapper:SetFrameStrata("LOW")
 
@@ -701,7 +780,7 @@ function MMDPS_GetPrimaryWrapper()
  end)
  drag:SetScript("OnDragStop", function()
   wrapper:StopMovingOrSizing()
-  MMDPS_SavePrimaryWrapperPosition()
+  MMDPS_ConstrainPrimaryWrapperToScreen(true)
  end)
  wrapper.dragHandle = drag
  wrapper:HookScript("OnShow", function()
@@ -727,10 +806,11 @@ function MMDPS_PositionPrimaryWrapper(wrapper, sourceWindow)
  MattMinimalDPSDB.primaryWindow = MattMinimalDPSDB.primaryWindow or {}
  local saved = MattMinimalDPSDB.primaryWindow
 
+ local minWidth, minHeight, maxWidth, maxHeight = MMDPS_GetPrimaryWindowSizeLimits()
  local width = tonumber(saved.w) or (sourceWindow and sourceWindow.GetWidth and sourceWindow:GetWidth()) or 400
  local height = tonumber(saved.h) or (sourceWindow and sourceWindow.GetHeight and sourceWindow:GetHeight()) or 200
- if width < 320 then width = 320 end
- if height < 140 then height = 140 end
+ width = math.max(minWidth, math.min(width, maxWidth))
+ height = math.max(minHeight, math.min(height, maxHeight))
  wrapper:SetSize(width, height)
 
  wrapper:ClearAllPoints()
@@ -748,6 +828,7 @@ function MMDPS_PositionPrimaryWrapper(wrapper, sourceWindow)
   wrapper:SetPoint("CENTER", UIParent, "CENTER", 0, 0)
  end
 
+ MMDPS_ConstrainPrimaryWrapperToScreen(true)
  wrapper._mmdpsSizingReady = true
 end
 
@@ -765,12 +846,7 @@ function MMDPS_HostPrimaryWindow(w)
  w:ClearAllPoints()
  w:SetPoint("TOPLEFT", wrapper, "TOPLEFT", 0, 0)
  w:SetPoint("BOTTOMRIGHT", wrapper, "BOTTOMRIGHT", 0, 0)
- if w.SetClampedToScreen then
-  w:SetClampedToScreen(false)
- end
- if w.SetClampRectInsets then
-  w:SetClampRectInsets(-10000, -10000, -10000, -10000)
- end
+ MMDPS_ConstrainWindowMovement(w)
  return true
 end
 
@@ -842,9 +918,9 @@ local function s(w)
  if isPrimaryWindow then
   MMDPS_HostPrimaryWindow(w)
  else
-  MMDPS_AllowUnrestrictedWindowMovement(w)
-  MMDPS_AllowUnrestrictedWindowMovement(w.MinimizeContainer)
-  MMDPS_AllowUnrestrictedWindowMovement(w.SourceWindow)
+  MMDPS_ConstrainWindowMovement(w)
+  MMDPS_ConstrainWindowMovement(w.MinimizeContainer)
+  MMDPS_ConstrainWindowMovement(w.SourceWindow)
  end
  m(hdr)
  b(w)
@@ -881,28 +957,20 @@ local function s(w)
  local resizeButton = w.ResizeButton or (w.MinimizeContainer and w.MinimizeContainer.ResizeButton)
 
  MMDPS_StyleSessionScrollBar(scrollBar)
- if w.SetResizeBounds then
-  w:SetResizeBounds(320, 140)
- elseif w.SetMinResize then
-  w:SetMinResize(320, 140)
- end
+ MMDPS_SetWindowResizeBounds(w)
  if resizeOwner and resizeOwner ~= w then
-  if resizeOwner.SetResizeBounds then
-   resizeOwner:SetResizeBounds(320, 140)
-  elseif resizeOwner.SetMinResize then
-   resizeOwner:SetMinResize(320, 140)
-  end
+  MMDPS_SetWindowResizeBounds(resizeOwner)
  end
  if resizeButton then
   resizeButton.minWidth = 320
   resizeButton.minHeight = 140
  end
- local insetL, insetR = 10, 5
+ local insetL, insetR = 0, 0
  if sb and header then
   pcall(function()
    sb:ClearAllPoints()
    sb:SetPoint("TOPLEFT", header, "BOTTOMLEFT", insetL, -5)
-   sb:SetPoint("BOTTOMRIGHT", w, "BOTTOMRIGHT", -insetR, 6)
+   sb:SetPoint("BOTTOMRIGHT", w, "BOTTOMRIGHT", -insetR, 0)
   end)
  end
 
@@ -1134,4 +1202,6 @@ MMDPS.UpdateAllWindowButtonsMouseover = MMDPS_UpdateAllWindowButtonsMouseover
 MMDPS.UpdateAllWindowTypeLabels = MMDPS_UpdateAllWindowTypeLabels
 MMDPS.CreateClassIconSizeSlider = MMDPS_CreateClassIconSizeSlider
 MMDPS.ShowSettingsFrame = MMDPS_ShowSettingsFrame
+MMDPS.ResetPrimaryWindowPosition = MMDPS_ResetPrimaryWrapperPosition
+MMDPS.ConstrainPrimaryWindowToScreen = MMDPS_ConstrainPrimaryWrapperToScreen
 

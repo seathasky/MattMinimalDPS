@@ -5,6 +5,8 @@ eventFrame:RegisterEvent("ADDON_LOADED")
 eventFrame:RegisterEvent("PLAYER_LOGIN")
 eventFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
 eventFrame:RegisterEvent("PLAYER_REGEN_DISABLED")
+eventFrame:RegisterEvent("DISPLAY_SIZE_CHANGED")
+eventFrame:RegisterEvent("UI_SCALE_CHANGED")
 eventFrame:SetScript("OnEvent", function(self, ev, arg1)
  if ev == "ADDON_LOADED" then
   if arg1 ~= MMDPS.addonName then return end
@@ -14,6 +16,12 @@ eventFrame:SetScript("OnEvent", function(self, ev, arg1)
 
  MMDPS.EnsureInitialized()
  MMDPS_InstallEditModeSettingsHook()
+
+ if ev == "DISPLAY_SIZE_CHANGED" or ev == "UI_SCALE_CHANGED" then
+  if MMDPS.ConstrainPrimaryWindowToScreen then
+   MMDPS.ConstrainPrimaryWindowToScreen(true)
+  end
+ end
 
  if ev == "PLAYER_REGEN_DISABLED" then
   if MattMinimalDPSSettingsFrame and MattMinimalDPSSettingsFrame:IsShown() then
@@ -33,6 +41,12 @@ eventFrame:SetScript("OnEvent", function(self, ev, arg1)
   MMDPS.pendingMouseoverRefreshAfterCombat = false
   if MattMinimalDPSDB and MattMinimalDPSDB.useCustomTheme and MMDPS.Apply then
    MMDPS.Apply()
+  end
+ end
+ if ev == "PLAYER_REGEN_ENABLED" and MMDPS.pendingWindowConstraint then
+  MMDPS.pendingWindowConstraint = false
+  if MMDPS.ConstrainPrimaryWindowToScreen then
+   MMDPS.ConstrainPrimaryWindowToScreen(true)
   end
  end
  if MattMinimalDPSDB and MattMinimalDPSDB.useCustomTheme and MMDPS.ApplyNowOrDefer then
