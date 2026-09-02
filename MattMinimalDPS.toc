@@ -2,11 +2,10 @@
 ## Title: Matt's Minimal DPS
 ## Notes: Minimal DPS meter skin with tabs, SharedMedia fonts, per-item font scaling, and auto-reset modes.
 ## Author: Seathasky
-## Version: 3.0.2
+## Version: 3.0.3
 ## X-Curse-Project-ID: 1458072
 ## IconTexture: Interface\AddOns\MattMinimalDPS\Images\mdps.png
 ## SavedVariables: MattMinimalDPSDB
-## SavedVariablesPerCharacter: MattMinimalDPSDBPC
 
 Libs\LibStub\LibStub.lua
 Libs\CallbackHandler-1.0\CallbackHandler-1.0.lua

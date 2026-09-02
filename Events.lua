@@ -15,7 +15,7 @@ eventFrame:SetScript("OnEvent", function(self, ev, arg1)
  end
 
  MMDPS.EnsureInitialized()
- MMDPS_InstallEditModeSettingsHook()
+ MMDPS.InstallEditModeSettingsHook()
 
  if ev == "DISPLAY_SIZE_CHANGED" or ev == "UI_SCALE_CHANGED" then
   if MMDPS.ConstrainPrimaryWindowToScreen then

@@ -19,6 +19,17 @@ local getShowSessionInTypeLabel = MMDPS.GetShowSessionInTypeLabel
 local mmdps_state = setmetatable({}, { __mode = "k" })
 local MMDPS_EXPERIMENTAL_COMBAT_MOUSEOVER = true
 local mmdpsEditModeHookRetries = 0
+local MMDPS_ConstrainWindowMovement
+local MMDPS_ConstrainPrimaryWrapperToScreen
+local MMDPS_SavePrimaryWrapperPosition
+local MMDPS_ResetPrimaryWrapperPosition
+local MMDPS_GetPrimaryWrapper
+local MMDPS_PositionPrimaryWrapper
+local MMDPS_HostPrimaryWindow
+local MMDPS_ShowSettingsFrame
+local MMDPS_IsDamageMeterEditModeFrame
+local MMDPS_OpenSettingsFromDamageMeterEditMode
+local MMDPS_InstallEditModeSettingsHook
 local HEADER_DIVIDER_COLOR = { 1, 1, 1, 0.18 }
 local HEADER_DIVIDER_THICKNESS = 1
 local HEADER_SHADE_RGB = { 0, 0, 0 }
@@ -637,7 +648,7 @@ local function installEntryFontHook()
  entryHookInstalled = hookedAny
 end
 
-function MMDPS_ConstrainWindowMovement(frame)
+MMDPS_ConstrainWindowMovement = function(frame)
  if not frame then return end
  if frame.SetMovable then
    frame:SetMovable(true)
@@ -668,7 +679,7 @@ local function MMDPS_SetWindowResizeBounds(frame)
  end
 end
 
-function MMDPS_ConstrainPrimaryWrapperToScreen(savePosition)
+MMDPS_ConstrainPrimaryWrapperToScreen = function(savePosition)
  if InCombatLockdown and InCombatLockdown() then
   MMDPS.pendingWindowConstraint = true
   return false
@@ -703,7 +714,7 @@ function MMDPS_ConstrainPrimaryWrapperToScreen(savePosition)
  return true
 end
 
-function MMDPS_SavePrimaryWrapperPosition()
+MMDPS_SavePrimaryWrapperPosition = function()
  local wrapper = _G.MattMinimalDPSPrimaryDamageMeterFrame
  if not wrapper or not wrapper.GetCenter then return end
  if not UIParent then return end
@@ -719,7 +730,7 @@ function MMDPS_SavePrimaryWrapperPosition()
  MattMinimalDPSDB.primaryWindow.h = wrapper:GetHeight()
 end
 
-function MMDPS_ResetPrimaryWrapperPosition()
+MMDPS_ResetPrimaryWrapperPosition = function()
  if InCombatLockdown and InCombatLockdown() then return false end
  local wrapper = MMDPS_GetPrimaryWrapper()
  if not wrapper or not UIParent then return false end
@@ -754,7 +765,7 @@ function MMDPS_ResetPrimaryWrapperPosition()
  return true
 end
 
-function MMDPS_GetPrimaryWrapper()
+MMDPS_GetPrimaryWrapper = function()
  if _G.MattMinimalDPSPrimaryDamageMeterFrame then
   return _G.MattMinimalDPSPrimaryDamageMeterFrame
  end
@@ -800,7 +811,7 @@ function MMDPS_GetPrimaryWrapper()
  return wrapper
 end
 
-function MMDPS_PositionPrimaryWrapper(wrapper, sourceWindow)
+MMDPS_PositionPrimaryWrapper = function(wrapper, sourceWindow)
  if not wrapper then return end
  MattMinimalDPSDB = MattMinimalDPSDB or {}
  MattMinimalDPSDB.primaryWindow = MattMinimalDPSDB.primaryWindow or {}
@@ -832,7 +843,7 @@ function MMDPS_PositionPrimaryWrapper(wrapper, sourceWindow)
  wrapper._mmdpsSizingReady = true
 end
 
-function MMDPS_HostPrimaryWindow(w)
+MMDPS_HostPrimaryWindow = function(w)
  if not w or not w.GetName or w:GetName() ~= "DamageMeterSessionWindow1" then return false end
  if InCombatLockdown and InCombatLockdown() then return true end
  local wrapper = MMDPS_GetPrimaryWrapper()
@@ -850,7 +861,7 @@ function MMDPS_HostPrimaryWindow(w)
  return true
 end
 
-function MMDPS_ShowSettingsFrame(tabKey)
+MMDPS_ShowSettingsFrame = function(tabKey)
  if InCombatLockdown and InCombatLockdown() then
   print("|cff66ccffMMDPS|r Settings cannot be edited while in combat.")
   return false
@@ -869,7 +880,7 @@ function MMDPS_ShowSettingsFrame(tabKey)
  return true
 end
 
-function MMDPS_IsDamageMeterEditModeFrame(frame)
+MMDPS_IsDamageMeterEditModeFrame = function(frame)
  if not frame then return false end
  if frame == _G.DamageMeter then return true end
  if frame.GetName and frame:GetName() == "DamageMeter" then return true end
@@ -878,7 +889,7 @@ function MMDPS_IsDamageMeterEditModeFrame(frame)
  return false
 end
 
-function MMDPS_OpenSettingsFromDamageMeterEditMode(frame)
+MMDPS_OpenSettingsFromDamageMeterEditMode = function(frame)
  if not MMDPS_IsDamageMeterEditModeFrame(frame) then return end
  if InCombatLockdown and InCombatLockdown() then
   MMDPS_ShowSettingsFrame("general")
@@ -892,7 +903,7 @@ function MMDPS_OpenSettingsFromDamageMeterEditMode(frame)
  end
 end
 
-function MMDPS_InstallEditModeSettingsHook()
+MMDPS_InstallEditModeSettingsHook = function()
  local manager = _G.EditModeManagerFrame
  if manager and manager._mmdpsSettingsHooked then return end
  if not manager or type(manager.SelectSystem) ~= "function" then
@@ -1204,4 +1215,5 @@ MMDPS.CreateClassIconSizeSlider = MMDPS_CreateClassIconSizeSlider
 MMDPS.ShowSettingsFrame = MMDPS_ShowSettingsFrame
 MMDPS.ResetPrimaryWindowPosition = MMDPS_ResetPrimaryWrapperPosition
 MMDPS.ConstrainPrimaryWindowToScreen = MMDPS_ConstrainPrimaryWrapperToScreen
+MMDPS.InstallEditModeSettingsHook = MMDPS_InstallEditModeSettingsHook
 

@@ -6,7 +6,6 @@ local LibStub = LibStub or _G.LibStub
 local DEFAULT_FONT_PATH="Interface\\AddOns\\MattMinimalDPS\\Fonts\\Naowh.ttf"
 local FONT_PATH=DEFAULT_FONT_PATH
 local DEFAULT_FONT_SIZE=12
-local FONT_SIZE=DEFAULT_FONT_SIZE
 local FONT_FLAGS="OUTLINE"
 local GUI_FONT_PATH=DEFAULT_FONT_PATH
 local GUI_FONT_SIZE=12
@@ -501,79 +500,6 @@ local function MMDPS_SetFontSizeForItem(itemKey, fontSize)
  end
 end
 
-local function MMDPS_DebugDumpEntryFonts()
- local printed = 0
- local maxLines = 16
-
- local function printRowFont(frame, region)
-  if printed >= maxLines then return true end
-  local text = region.GetText and region:GetText() or nil
-  if not text or text == "" then return false end
-  local path, size, flags = region:GetFont()
-  print(string.format("|cff66ccffMMDPS|r rowfs frame=%q text=%q font=%q size=%s flags=%q", tostring(frame and frame.GetName and frame:GetName() or "<unnamed>"), tostring(text), tostring(path), tostring(size), tostring(flags)))
-  printed = printed + 1
-  return printed >= maxLines
- end
-
- local function dumpFrame(frame)
-  if not frame or not frame.GetRegions then return false end
-  for _, region in ipairs({frame:GetRegions()}) do
-   if region and region.GetObjectType and region:GetObjectType() == "FontString" then
-    if printRowFont(frame, region) then
-     return true
-    end
-   end
-  end
-  return false
- end
-
- for i = 1, 40 do
-  if printed >= maxLines then break end
-  local window = _G["DamageMeterSessionWindow"..i]
-  if window then
-   local sb = window.ScrollBox or (window.GetScrollBox and window:GetScrollBox())
-   if sb then
-    if sb.ForEachFrame then
-     sb:ForEachFrame(function(frame)
-      if printed < maxLines then
-       dumpFrame(frame)
-      end
-     end)
-    elseif sb.EnumerateFrames then
-     for frame in sb:EnumerateFrames() do
-      if dumpFrame(frame) then
-       break
-      end
-     end
-    end
-   end
-
-   if printed < maxLines then
-    local visited = {}
-    local function walk(frame, depth)
-     if printed >= maxLines then return end
-     if not frame or visited[frame] or depth > 8 then return end
-     visited[frame] = true
-     dumpFrame(frame)
-     if frame.GetChildren then
-      for _, child in ipairs({frame:GetChildren()}) do
-       walk(child, depth + 1)
-      end
-     end
-    end
-    walk(window, 0)
-    if window.SourceWindow then
-     walk(window.SourceWindow, 0)
-    end
-   end
-  end
- end
-
- if printed == 0 then
-  print("|cff66ccffMMDPS|r rowfs no visible row FontStrings found.")
- end
-end
-
 local mmdpsInitialized = false
 local mmdpsSharedMediaHooked = false
 local mmdpsFontPreloadFrame = nil
@@ -672,8 +598,6 @@ MattMinimalDPSDB.globalFont = NormalizeMediaName(MattMinimalDPSDB.globalFont) or
   end
  end
  EnsureFontSizeSettings()
- FONT_SIZE = DEFAULT_FONT_SIZE
-
  MMDPS_RegisterFontMedia()
  MMDPS_InstallSharedMediaHooks()
  local selected = MMDPS_GetGlobalFontName()
@@ -716,7 +640,6 @@ MMDPS.GetGlobalFontPathByName = MMDPS_GetGlobalFontPathByName
 MMDPS.GetFontOptions = MMDPS_GetFontOptions
 MMDPS.SetGlobalFont = MMDPS_SetGlobalFont
 MMDPS.SetFontSizeForItem = MMDPS_SetFontSizeForItem
-MMDPS.DebugDumpEntryFonts = MMDPS_DebugDumpEntryFonts
 MMDPS.InitializeSettings = MMDPS_InitializeSettings
 MMDPS.EnsureInitialized = function()
  if not mmdpsInitialized then

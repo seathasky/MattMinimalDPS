@@ -1091,14 +1091,3 @@ settingsFrame:HookScript("OnHide", function()
  MattMinimalDPSDB.settingsWidth = math.floor(settingsFrame:GetWidth() + 0.5)
  MattMinimalDPSDB.settingsHeight = math.floor(settingsFrame:GetHeight() + 0.5)
 end)
- 
- local function forceOpenDamageMeter()
-  pcall(function() SetCVar("damageMeterEnabled", "1") end)
-
-  local dm = _G.DamageMeter
-  if dm then
-   if dm.SetShown then pcall(dm.SetShown, dm, true) end
-  end
- end
- 
- C_Timer.After(2, forceOpenDamageMeter)
