@@ -26,6 +26,8 @@ local MMDPS_ResetPrimaryWrapperPosition
 local MMDPS_GetPrimaryWrapper
 local MMDPS_PositionPrimaryWrapper
 local MMDPS_HostPrimaryWindow
+local MMDPS_AnchorPrimaryMeter
+local MMDPS_CopyWindowGeometry
 local MMDPS_ShowSettingsFrame
 local MMDPS_IsDamageMeterEditModeFrame
 local MMDPS_OpenSettingsFromDamageMeterEditMode
@@ -756,11 +758,18 @@ MMDPS_ResetPrimaryWrapperPosition = function()
 
  if sourceWindow and sourceWindow.ClearAllPoints then
   sourceWindow:ClearAllPoints()
-  sourceWindow:SetPoint("TOPLEFT", wrapper, "TOPLEFT", 0, 0)
-  sourceWindow:SetPoint("BOTTOMRIGHT", wrapper, "BOTTOMRIGHT", 0, 0)
+  sourceWindow:SetPoint("TOPLEFT", _G.DamageMeter or wrapper, "TOPLEFT", 0, 0)
+  sourceWindow:SetPoint("BOTTOMRIGHT", _G.DamageMeter or wrapper, "BOTTOMRIGHT", 0, 0)
  end
 
  MMDPS_ConstrainPrimaryWrapperToScreen(true)
+ if _G.DamageMeter then
+  if wrapper._mmdpsEditing then
+   MMDPS_CopyWindowGeometry(wrapper, DamageMeter)
+  else
+   MMDPS_AnchorPrimaryMeter(wrapper)
+  end
+ end
 
  return true
 end
@@ -778,15 +787,18 @@ MMDPS_GetPrimaryWrapper = function()
  wrapper:EnableMouse(false)
  wrapper:SetFrameStrata("LOW")
 
- local drag = CreateFrame("Frame", "MattMinimalDPSPrimaryDamageMeterDragHandle", UIParent)
+ -- Parent input handles to the visible meter so hidden meters cannot intercept clicks.
+ local window = _G.DamageMeterSessionWindow1 or wrapper
+ local drag = CreateFrame("Frame", "MattMinimalDPSPrimaryDamageMeterDragHandle", window)
  drag:SetPoint("TOPLEFT", wrapper, "TOPLEFT", 0, 0)
  drag:SetPoint("TOPRIGHT", wrapper, "TOPRIGHT", -110, 0)
  drag:SetHeight(28)
- drag:SetFrameStrata("DIALOG")
+ drag:SetFrameLevel(window:GetFrameLevel() + 10)
  drag:EnableMouse(true)
  drag:RegisterForDrag("LeftButton")
  drag:SetScript("OnDragStart", function()
   if InCombatLockdown and InCombatLockdown() then return end
+  if wrapper._mmdpsEditing then return end
   wrapper:StartMoving()
  end)
  drag:SetScript("OnDragStop", function()
@@ -794,11 +806,39 @@ MMDPS_GetPrimaryWrapper = function()
   MMDPS_ConstrainPrimaryWrapperToScreen(true)
  end)
  wrapper.dragHandle = drag
+ local resize = CreateFrame("Button", "MattMinimalDPSPrimaryDamageMeterResizeHandle", window)
+ resize:SetSize(20, 20)
+ resize:SetPoint("BOTTOMRIGHT", window, "BOTTOMRIGHT", 0, 0)
+ resize:SetFrameLevel(window:GetFrameLevel() + 10)
+ resize:SetNormalTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Up")
+ resize:SetHighlightTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Highlight")
+ resize:SetPushedTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Down")
+ local function StopResizing()
+  if not wrapper._mmdpsResizing then return end
+  wrapper._mmdpsResizing = false
+  wrapper:StopMovingOrSizing()
+  MMDPS_ConstrainPrimaryWrapperToScreen(true)
+ end
+ resize:SetScript("OnMouseDown", function(_, button)
+  if button ~= "LeftButton" or wrapper._mmdpsEditing then return end
+  if InCombatLockdown and InCombatLockdown() then return end
+  wrapper._mmdpsResizing = true
+  wrapper:StartSizing("BOTTOMRIGHT")
+ end)
+ resize:SetScript("OnMouseUp", function(_, button)
+  if button == "LeftButton" then StopResizing() end
+ end)
+ resize:SetScript("OnHide", StopResizing)
+ wrapper.resizeHandle = resize
  wrapper:HookScript("OnShow", function()
-  drag:Show()
+  if not wrapper._mmdpsEditing then
+   drag:Show()
+   resize:Show()
+  end
  end)
  wrapper:HookScript("OnHide", function()
   drag:Hide()
+  resize:Hide()
  end)
 
  wrapper:SetScript("OnSizeChanged", function()
@@ -843,6 +883,23 @@ MMDPS_PositionPrimaryWrapper = function(wrapper, sourceWindow)
  wrapper._mmdpsSizingReady = true
 end
 
+MMDPS_CopyWindowGeometry = function(source, target)
+ local x, y = source:GetCenter()
+ local parentX, parentY = UIParent:GetCenter()
+ if not (x and y and parentX and parentY) then return end
+ target:ClearAllPoints()
+ target:SetSize(source:GetWidth(), source:GetHeight())
+ target:SetPoint("CENTER", UIParent, "CENTER", x - parentX, y - parentY)
+end
+
+MMDPS_AnchorPrimaryMeter = function(wrapper)
+ local meter = _G.DamageMeter
+ if not meter then return end
+ meter:ClearAllPoints()
+ meter:SetPoint("TOPLEFT", wrapper, "TOPLEFT", 0, 0)
+ meter:SetPoint("BOTTOMRIGHT", wrapper, "BOTTOMRIGHT", 0, 0)
+end
+
 MMDPS_HostPrimaryWindow = function(w)
  if not w or not w.GetName or w:GetName() ~= "DamageMeterSessionWindow1" then return false end
  if InCombatLockdown and InCombatLockdown() then return true end
@@ -853,10 +910,56 @@ MMDPS_HostPrimaryWindow = function(w)
   wrapper._mmdpsPositioned = true
  end
 
+ local meter = _G.DamageMeter
+ local function BeginEditing()
+  if not (MattMinimalDPSDB and MattMinimalDPSDB.useCustomTheme) then return end
+  if InCombatLockdown and InCombatLockdown() then return end
+  wrapper:StopMovingOrSizing()
+  wrapper._mmdpsEditing = true
+  wrapper._mmdpsEditExitPending = false
+  wrapper.dragHandle:Hide()
+  wrapper.resizeHandle:Hide()
+  -- Keep the session window on Blizzard's system frame so its Edit Mode
+  -- selection and preview share exactly the same position and dimensions.
+  MMDPS_CopyWindowGeometry(wrapper, meter)
+ end
+ local function FinishEditing()
+  if not wrapper._mmdpsEditExitPending then return end
+  if InCombatLockdown and InCombatLockdown() then
+   MMDPS.pendingDeferredApply = true
+   return
+  end
+  MMDPS_CopyWindowGeometry(meter, wrapper)
+  wrapper._mmdpsEditing = false
+  wrapper._mmdpsEditExitPending = false
+  MMDPS_ConstrainPrimaryWrapperToScreen(true)
+  MMDPS_AnchorPrimaryMeter(wrapper)
+  wrapper.dragHandle:Show()
+  wrapper.resizeHandle:Show()
+ end
+ if meter and not meter._mmdpsGeometryHooked then
+  if type(meter.OnEditModeEnter) == "function" and type(meter.OnEditModeExit) == "function" then
+   hooksecurefunc(meter, "OnEditModeEnter", BeginEditing)
+   hooksecurefunc(meter, "OnEditModeExit", function()
+    if not wrapper._mmdpsEditing then return end
+    wrapper._mmdpsEditExitPending = true
+    -- Save/Cancel and layout restoration finish after the system exit callback.
+    C_Timer.After(0, FinishEditing)
+   end)
+   meter._mmdpsGeometryHooked = true
+  end
+ end
+ if wrapper._mmdpsEditExitPending then FinishEditing() end
+ if meter and meter.IsEditing and meter:IsEditing() and not wrapper._mmdpsEditing then
+  BeginEditing()
+ end
+ if not wrapper._mmdpsEditing then
+  MMDPS_AnchorPrimaryMeter(wrapper)
+ end
  wrapper:Show()
  w:ClearAllPoints()
- w:SetPoint("TOPLEFT", wrapper, "TOPLEFT", 0, 0)
- w:SetPoint("BOTTOMRIGHT", wrapper, "BOTTOMRIGHT", 0, 0)
+ w:SetPoint("TOPLEFT", meter or wrapper, "TOPLEFT", 0, 0)
+ w:SetPoint("BOTTOMRIGHT", meter or wrapper, "BOTTOMRIGHT", 0, 0)
  MMDPS_ConstrainWindowMovement(w)
  return true
 end
